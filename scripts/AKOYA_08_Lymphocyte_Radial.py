@@ -4,7 +4,7 @@
 AKOYA Phenocycler - LYMPHOCYTE RADIAL POSITION, THE PRIMARY TEST
 Rhesus Mtb + SIV, D1MT-treated (G3) vs untreated (G4), necropsy lung sections
 
-Script 08 of the AKOYA analysis series.
+Script 08 of the AKOYA analysis series. REVISION 2.
 
 THE HYPOTHESIS
     Lymphocytes sit closer to the core of a myeloid focus in D1MT-treated
@@ -17,58 +17,110 @@ THE HYPOTHESIS
     unlike every macrophage and neutrophil result these positions are not
     circular.
 
-WHAT THIS FIXES FROM SCRIPTS 06 AND 07
+WHAT THIS FIXES FROM SCRIPTS 06 AND 07 (unchanged, and now better supported)
     1. CENTERED RADIAL POSITION IS THE OUTCOME. Scripts 06 and 07 modelled raw
        radial_pos while reporting delta as the effect size. Those are different
-       quantities, and CD4- T cells showed it: per-animal deltas of -0.21, -0.12,
-       -0.09 against -0.05, +0.01, +0.17, but a model coefficient of +0.010 with
-       p = 0.94.
+       quantities, and CD4- T cells show it on the current rev4 run: per-animal
+       pooled deltas of -0.226, -0.121, -0.096 against -0.052, +0.032, +0.166,
+       a clean split, but a raw-radial model coefficient of -0.034 with
+       p = 0.808.
 
        delta = mean radial of population P, minus the mean of a random subset of
        the same size. A random subset's expected mean is the structure's overall
        mean, so delta is exactly (radial_pos - structure mean radial). Centering
        each cell on its structure mean therefore makes the model test the same
-       quantity the effect sizes report. That is the outcome used here.
+       quantity the effect sizes report.
 
     2. CORE CELLS ONLY IN THE PRIMARY MODEL. Core cells are normalised 0 to 1 by
-       each focus's own size, but cuff cells run 1 to 2 across a FIXED 150 um
-       band that is not size-normalised. Mixing them reintroduces structure size
-       through the back door. Core-only is primary; core-plus-cuff is secondary.
+       each focus's own inscribed radius, but cuff cells run 1 to 2 across a
+       FIXED 150 um band that is not size-normalised. Mixing them reintroduces
+       structure size. Core-only is primary; core-plus-cuff is secondary.
 
-    3. NORMALISED DISTANCE FAMILY DROPPED. Dividing distance by focus radius
-       correlates with radius at -0.12 to -0.68, a stronger confound than the raw
-       values had (-0.10 to +0.39). It over-corrects. Delta distance
-       (-0.21 to +0.24) is retained.
+    3. NORMALISED DISTANCE FAMILY DROPPED. Script 07 revision 2 measured this
+       properly on both radius definitions. Correlation with focus radius:
+       raw median |r| = 0.10, delta 0.11, normalised by equivalent radius 0.36,
+       normalised by inscribed radius 0.30. All twenty normalised correlations
+       are NEGATIVE, across both definitions and all ten pairs, which is
+       systematic over-correction rather than residual confounding. Delta is
+       retained and is the only distance outcome used here.
 
-    4. ONE POOLED TEST INSTEAD OF TEN. Five lymphocyte populations are pooled
-       into a single model with cell type as a covariate, so composition
-       differences between arms cannot drive the result, and power is pooled
-       rather than split across ten underpowered comparisons.
+    4. ONE POOLED TEST INSTEAD OF TEN, with cell type as a covariate.
 
-    5. SPILLOVER CONTROL FOR CO-EXPRESSION. The iNOS / Arginase-1 co-expression
-       ratio separates the arms completely at the 75th percentile and above. But
-       segmentation spillover inflates apparent co-expression of ANY two markers,
-       and gets worse as cells pack more densely; untreated foci are three to
-       five fold denser. Control pairs that should never co-occur in one
-       macrophage (CD3e with Pan-Cytokeratin, CD3e with CD20, CD45 with
-       Pan-Cytokeratin) are computed the same way. If those separate by arm too,
-       the iNOS / Arginase-1 result is spillover and must be dropped.
+    5. SPILLOVER CONTROL FOR CO-EXPRESSION, using pairs that cannot co-occur in
+       a single macrophage.
 
-WHAT IS ALREADY ESTABLISHED (fold-6 run)
-    Plasma cells (q = 0.088) and B cells (q = 0.088) survive BH correction in the
-    radial family and are NOT circular. All three treated animals are negative on
-    five of six populations. Delta distance confirms the same axis, with IDO1- to
-    plasma cells at p = 0.046 and the only two non-normalised complete
-    separations both on plasma cells.
+WHAT CHANGED IN REVISION 2 (and why)
+
+    1. A COMPOSITION-BALANCED CENTRING IS RUN ALONGSIDE THE PRIMARY ONE.
+       radial_centered_core subtracts the mean radial position of ALL core cells
+       in the structure. That mean is cell-weighted, so it is dominated by
+       whichever population is most abundant, and composition differs sharply
+       between arms: untreated cores are heavily myeloid, treated cores are not.
+       The reference point therefore moves with the arm, and the outcome reads
+       "closer to the core than the average cell in this focus" rather than
+       "closer to the core".
+
+       The balanced version subtracts the UNWEIGHTED MEAN OF THE PER-PHENOTYPE
+       MEANS within that structure, over phenotypes clearing
+       MIN_CELLS_FOR_BALANCE cells there. Every population contributes equally
+       to the reference, so a shift in composition cannot move it. If the
+       coefficient survives that, the claim is about position rather than about
+       what else is in the focus.
+
+       The exact area-weighted reference, the mean of the radial map over all
+       core PIXELS, is composition-free by construction and would be better
+       still. It cannot be computed from the per-cell tables and needs one
+       extra column exported from script 04. If mean_radial_over_area appears in
+       table 35 this script will read and use it; otherwise it uses the balanced
+       version and says so.
+
+    2. BH FAMILIES ARE SPLIT PROPERLY.
+       The per_phenotype family mixed the circular myeloid tests with the
+       non-circular lymphocyte tests, inflating m and blending a descriptive
+       family with a confirmatory one. They are now separate families.
+
+    3. SENSITIVITY ANALYSES NO LONGER RECEIVE q-VALUES.
+       leave_one_out and marker_robustness are refits of one hypothesis on
+       subsets, not independent tests. BH across them is meaningless and invites
+       misreading. Their q-values are NaN.
+
+    4. THE SPILLOVER VERDICT COMPARES TEST AGAINST CONTROL, NOT AGAINST ZERO.
+       The old rule dropped the co-expression result if ANY control pair
+       separated at ANY threshold. With three control pairs at six thresholds
+       and three animals per arm, complete separation arises by chance at
+       p = 0.10 per test, so about 1.8 spurious control separations are expected
+       even with a perfectly clean panel. The verdict now states the chance
+       expectation and compares the test pair's separation count against the
+       worst single control pair.
+
+    5. MICRONS CONVERSION USES THE INSCRIBED RADIUS.
+       The radial coordinate normalises by each focus's maximum inscribed
+       radius, so converting a radial-unit coefficient with equiv_radius_um
+       overstates it. Script 04 revision 4 exports max_inscribed_radius_um. On
+       the current run the medians are 125 um treated and 168 um untreated
+       against 138 and 201 equivalent, so a coefficient of -0.090 is about 11
+       and 15 um rather than 12 and 18.
+
+    6. PER-ANIMAL COMPLETE SEPARATION IS CHECKED AND REPORTED.
+       Script 06's pooled delta shows complete separation between arms on every
+       lymphocyte population. The same check is run here on the centred outcome,
+       which is the quantity this script models, so the two can be compared
+       rather than conflated.
+
+    7. STALE NUMBERS CORRECTED. The prior-run results quoted in the header
+       (q = 0.088 for plasma and B cells, IDO1- to plasma at p = 0.046) were
+       from an earlier structure definition and are regenerated by this run.
+       CD4's comparability is ICC 0.403 on p99 and 0.874 on section medians, not
+       the single 0.879 previously quoted; see script 03 table 22.
 
 INPUTS
     structures_rev4/cell_assignments/<section>_cell_structures.csv
     structures_rev4/tables/35_foci_structures_relative.csv
-    distance_stats/tables/53_nn_per_structure.csv   (for the distance null)
+    distance_stats/tables/53_nn_per_structure.csv   (shared null, from 06)
     AKOYA/data/<section>.csv                        (spillover control markers)
 
 OUTPUTS
-    figures/  F51 .. F56
+    figures/  F51 .. F55
     tables/   70 .. 78
 
 USAGE
@@ -92,6 +144,14 @@ CONDITION_ORDER = ["D1MT", "Untreated"]
 CONDITION_COLORS = {"D1MT": "#2C7FB8", "Untreated": "#D95F02"}
 REFERENCE_ARM = "Untreated"
 STRUCT_COL = "focus_id"
+
+# ---- centring ---------------------------------------------------------------
+# Primary keeps the cell-weighted reference for continuity with the delta effect
+# sizes. Balanced weights every phenotype equally so composition cannot move the
+# reference. If script 04 ever exports mean_radial_over_area, that is preferred
+# over both and will be used automatically.
+MIN_CELLS_FOR_BALANCE = 10
+AREA_REFERENCE_COL = "mean_radial_over_area"
 
 # ---- phenotypes -------------------------------------------------------------
 IDO1_POS = "CD68+IDO1+ Macrophages"
@@ -125,6 +185,8 @@ MODEL_MAX_CELLS_PER_STRUCTURE = 3000
 MODEL_MIN_CELLS_PER_ANIMAL = 20
 BH_ALPHA = 0.10
 RANDOM_SEED = 0
+# families that are refits of one hypothesis, not independent tests
+NO_BH_FAMILIES = ["leave_one_out", "marker_robustness", "centring_check"]
 
 # ---- radial binning for profiles -------------------------------------------
 N_RADIAL_BINS = 10          # core only, 0 to 1
@@ -143,6 +205,8 @@ CONTROL_PAIRS = [
 PHENOTYPE_COL_RAW = "Phenotypes"
 COEXPRESSION_PERCENTILES = [50, 60, 70, 75, 80, 90]
 COEXPRESSION_PRIMARY = 75
+# with 3 animals per arm, complete separation occurs by chance at this rate
+CHANCE_SEPARATION_RATE = 0.10
 
 # ---- plotting ---------------------------------------------------------------
 FONT_SIZE_BASE = 28
@@ -294,6 +358,15 @@ def benjamini_hochberg(pvals):
     return q
 
 
+def complete_separation(a, b):
+    """True when the two groups' ranges do not overlap at all."""
+    a = np.asarray(a, float); b = np.asarray(b, float)
+    a = a[np.isfinite(a)]; b = b[np.isfinite(b)]
+    if not len(a) or not len(b):
+        return False
+    return bool(a.max() < b.min() or b.max() < a.min())
+
+
 def fit_mixed(df, outcome, label, covariates=None, note=""):
     """
     outcome ~ arm [+ covariates], random intercept for animal,
@@ -374,7 +447,7 @@ def fit_mixed(df, outcome, label, covariates=None, note=""):
 _tee = Tee(os.path.join(TAB_DIR, "00_lymphocyte_radial_report.txt"))
 sys.stdout = _tee
 
-banner("AKOYA LYMPHOCYTE RADIAL POSITION - PRIMARY TEST")
+banner("AKOYA LYMPHOCYTE RADIAL POSITION - PRIMARY TEST (revision 2)")
 print(f"Run time : {datetime.now().isoformat(timespec='seconds')}")
 print(f"Input    : {IN_DIR}")
 print(f"Output   : {OUT_DIR}")
@@ -385,17 +458,45 @@ if not HAVE_SM:
     print(f"\n    WARNING: statsmodels unavailable ({_sm_err}). Models skipped.")
 
 print("\nOUTCOME")
-print("    centered radial position = radial_pos minus the mean radial position")
-print("    of ALL cells in that structure. This is exactly the per-cell form of")
-print("    the delta effect size, because a random subset's expected mean is the")
-print("    structure mean. Negative = closer to the core than that structure's")
-print("    own cells generally are.")
+print("    PRIMARY   centered radial position = radial_pos minus the mean radial")
+print("              position of ALL core cells in that structure. This is the")
+print("              per-cell form of the delta effect size, because a random")
+print("              subset's expected mean is the structure mean.")
+print("    BALANCED  the same, but the reference is the UNWEIGHTED MEAN OF THE")
+print("              PER-PHENOTYPE MEANS. The primary reference is cell-weighted")
+print("              and therefore moves with composition, which differs sharply")
+print("              between arms. If the coefficient survives the balanced")
+print("              version, the claim is about position rather than about what")
+print("              else is in the focus.")
+print("    Negative = closer to the core than that structure's own cells are.")
 
 
-# %% Cell 3 - load and center
+# %% Cell 3 - load, center two ways
 # =============================================================================
 
 banner("LOADING AND CENTERING")
+
+# focus geometry, for the microns conversion
+inscribed_of, equiv_of, area_ref_of = {}, {}, {}
+HAVE_AREA_REF = False
+if os.path.exists(FOCI_TABLE):
+    ft = pd.read_csv(FOCI_TABLE)
+    idcol = "focus_id" if "focus_id" in ft.columns else STRUCT_COL
+    HAVE_AREA_REF = AREA_REFERENCE_COL in ft.columns
+    for _, r in ft.iterrows():
+        key = (r["sample_id"], int(r[idcol]))
+        equiv_of[key] = float(r.get("equiv_radius_um", np.nan))
+        inscribed_of[key] = float(r.get("max_inscribed_radius_um", np.nan))
+        if HAVE_AREA_REF:
+            area_ref_of[key] = float(r[AREA_REFERENCE_COL])
+    print(f"    geometry for {len(equiv_of)} structures"
+          f"{'' if np.isfinite(list(inscribed_of.values())).any() else ' (no inscribed radius)'}")
+    if HAVE_AREA_REF:
+        print(f"    '{AREA_REFERENCE_COL}' found: the exact area-weighted "
+              f"reference will be used as a third centring.")
+    else:
+        print(f"    '{AREA_REFERENCE_COL}' not in table 35. The balanced "
+              f"centring is the composition-free check.")
 
 paths = sorted(glob.glob(os.path.join(CELL_DIR, "*_cell_structures.csv")))
 if not paths:
@@ -430,6 +531,34 @@ for p in paths:
         means = sub_d.groupby(STRUCT_COL)["radial_pos"].transform("mean")
         col = "radial_centered_core" if scope == "core" else "radial_centered_all"
         d.loc[mask, col] = sub_d["radial_pos"] - means
+
+    # ---- composition-balanced reference, core only -------------------------
+    core_d = d.loc[d["is_core"]]
+    bal_ref = {}
+    for k, g in core_d.groupby(STRUCT_COL):
+        per_ph = g.groupby("pheno")["radial_pos"].agg(["mean", "size"])
+        per_ph = per_ph.loc[per_ph["size"] >= MIN_CELLS_FOR_BALANCE]
+        bal_ref[k] = (float(per_ph["mean"].mean()) if len(per_ph)
+                      else float(g["radial_pos"].mean()))
+    d.loc[d["is_core"], "radial_centered_core_balanced"] = (
+        core_d["radial_pos"] - core_d[STRUCT_COL].map(bal_ref))
+    d["balance_reference"] = d[STRUCT_COL].map(bal_ref)
+    d["n_phenotypes_in_balance"] = d[STRUCT_COL].map(
+        {k: int((g.groupby("pheno").size() >= MIN_CELLS_FOR_BALANCE).sum())
+         for k, g in core_d.groupby(STRUCT_COL)})
+
+    # ---- exact area-weighted reference, if script 04 exported it -----------
+    if HAVE_AREA_REF:
+        d.loc[d["is_core"], "radial_centered_core_area"] = (
+            core_d["radial_pos"]
+            - core_d[STRUCT_COL].map(
+                lambda k: area_ref_of.get((sid, int(k)), np.nan)))
+
+    d["inscribed_radius_um"] = d[STRUCT_COL].map(
+        lambda k: inscribed_of.get((sid, int(k)), np.nan))
+    d["equiv_radius_um"] = d[STRUCT_COL].map(
+        lambda k: equiv_of.get((sid, int(k)), np.nan))
+
     frames.append(d)
     print(f"    {sid:<12} {d['condition'].iloc[0]:<10} {len(d):>8,} cells in "
           f"{int(d[STRUCT_COL].nunique()):>3} structures "
@@ -461,6 +590,45 @@ core["lineage"] = np.where(core["pheno"].isin(T_LINEAGE), "T lineage",
                                     "other"))
 lym = core.loc[core["pheno"].isin(LYMPHOCYTES)].copy()
 
+CENTRING_OUTCOMES = [("radial_centered_core", "primary (cell-weighted)")]
+if "radial_centered_core_balanced" in core.columns:
+    CENTRING_OUTCOMES.append(("radial_centered_core_balanced",
+                              "balanced (phenotype-weighted)"))
+if HAVE_AREA_REF and "radial_centered_core_area" in core.columns:
+    CENTRING_OUTCOMES.append(("radial_centered_core_area",
+                              "area-weighted (exact)"))
+
+sub("How different are the two references?")
+print("    If composition were the same in both arms these would agree. They")
+print("    do not have to, and the size of the gap is the size of the concern.\n")
+print(f"    {'section':<12}{'structs':>9}{'cell-wtd ref':>15}{'balanced ref':>15}"
+      f"{'gap':>9}{'phenos':>8}")
+print("    " + "-" * 68)
+ref_rows = []
+for s in SAMPLE_ORDER:
+    g = core.loc[core["sample_id"] == s]
+    for k, gg in g.groupby(STRUCT_COL):
+        ref_rows.append({
+            "sample_id": s, "condition": COND_OF[s], "structure_id": int(k),
+            "n_core_cells": len(gg),
+            "cell_weighted_reference": float(gg["radial_pos"].mean()),
+            "balanced_reference": float(gg["balance_reference"].iloc[0]),
+            "n_phenotypes_in_balance": int(gg["n_phenotypes_in_balance"].iloc[0]),
+        })
+refs = pd.DataFrame(ref_rows)
+refs["reference_gap"] = (refs["cell_weighted_reference"]
+                         - refs["balanced_reference"])
+for s in SAMPLE_ORDER:
+    g = refs.loc[refs["sample_id"] == s]
+    print(f"    {s:<12}{len(g):>9}{g['cell_weighted_reference'].median():>15.3f}"
+          f"{g['balanced_reference'].median():>15.3f}"
+          f"{g['reference_gap'].median():>+9.3f}"
+          f"{g['n_phenotypes_in_balance'].median():>8.0f}")
+for c in CONDITION_ORDER:
+    g = refs.loc[refs["condition"] == c]
+    print(f"    {c:<12} median gap {g['reference_gap'].median():+.3f}")
+write_csv(refs, "77_centring_references.csv")
+
 sub("Lymphocyte cell counts in focus cores")
 tab = (lym.groupby(["sample_id", "pheno"]).size().unstack(fill_value=0)
        .reindex(index=SAMPLE_ORDER, columns=LYMPHOCYTES, fill_value=0))
@@ -471,44 +639,62 @@ print(f"\n    pooled lymphocytes: "
 write_csv(tab.reset_index(), "70_lymphocyte_counts_core.csv")
 
 
-# %% Cell 4 - sanity check: does centering reproduce the delta effect sizes?
+# %% Cell 4 - per-animal effect sizes and separation
 # =============================================================================
 
-banner("SANITY CHECK - CENTERING REPRODUCES DELTA")
+banner("PER-ANIMAL CENTERED RADIAL POSITION")
 
-print("    Per-animal mean of the centered radial position should match the")
-print("    permutation delta reported by script 06, since delta is exactly this")
-print("    quantity. Any large disagreement means something is wrong.\n")
+print("    Per-animal mean of the centered radial position is the same quantity")
+print("    script 06 reports as a permutation delta. Both centrings are shown.\n")
 
 check_rows = []
 for s in SAMPLE_ORDER:
     d = core.loc[core["sample_id"] == s]
     for p in LYMPHOCYTES + [IDO1_POS, IDO1_NEG, "Neutrophils"]:
-        v = d.loc[d["pheno"] == p, "radial_centered_core"].dropna()
+        v = d.loc[d["pheno"] == p]
         if not len(v):
             continue
-        check_rows.append({
+        rec = {
             "sample_id": s, "animal_id": short_label(s),
             "condition": COND_OF[s], "phenotype": p, "n_cells": len(v),
-            "mean_centered_radial": float(v.mean()),
-            "median_centered_radial": float(v.median()),
-        })
+            "mean_centered_radial": float(v["radial_centered_core"].mean()),
+            "median_centered_radial": float(v["radial_centered_core"].median()),
+        }
+        for col, _ in CENTRING_OUTCOMES[1:]:
+            rec[f"mean_{col}"] = float(v[col].mean()) if col in v.columns else np.nan
+        check_rows.append(rec)
 chk = pd.DataFrame(check_rows)
 write_csv(chk, "71_centered_radial_per_animal.csv")
 
-sub("Mean centered radial position, core cells only")
-print(f"    {'phenotype':<26}" + "".join(f"{short_label(s):>12}" for s in SAMPLE_ORDER))
-print("    " + "-" * (26 + 12 * len(SAMPLE_ORDER)))
-for p in LYMPHOCYTES + [IDO1_POS, IDO1_NEG, "Neutrophils"]:
-    row = f"    {p:<26}"
-    for s in SAMPLE_ORDER:
-        v = chk.loc[(chk["sample_id"] == s) & (chk["phenotype"] == p),
-                    "mean_centered_radial"]
-        row += f"{v.iloc[0]:>+12.3f}" if len(v) else f"{'na':>12}"
-    print(row)
+for col, name in CENTRING_OUTCOMES:
+    key = "mean_centered_radial" if col == "radial_centered_core" else f"mean_{col}"
+    if key not in chk.columns:
+        continue
+    sub(f"Mean centered radial position, {name}")
+    print(f"    {'phenotype':<26}" + "".join(f"{short_label(s):>12}" for s in SAMPLE_ORDER)
+          + f"{'separated':>12}")
+    print("    " + "-" * (26 + 12 * len(SAMPLE_ORDER) + 12))
+    for p in LYMPHOCYTES + [IDO1_POS, IDO1_NEG, "Neutrophils"]:
+        row = f"    {p:<26}"
+        vals = {c: [] for c in CONDITION_ORDER}
+        for s in SAMPLE_ORDER:
+            v = chk.loc[(chk["sample_id"] == s) & (chk["phenotype"] == p), key]
+            if len(v):
+                row += f"{v.iloc[0]:>+12.3f}"
+                vals[COND_OF[s]].append(float(v.iloc[0]))
+            else:
+                row += f"{'na':>12}"
+        sep = complete_separation(vals[CONDITION_ORDER[0]], vals[CONDITION_ORDER[1]])
+        row += f"{'YES' if sep else '':>12}"
+        if p in DETECTION_POOL:
+            row += "  [circular]"
+        print(row)
+    print(f"\n    Complete separation with three animals per arm arises by")
+    print(f"    chance with probability {CHANCE_SEPARATION_RATE:.2f} per test, so")
+    print(f"    read the column as a pattern across populations, not one by one.")
 
 
-# %% Cell 5 - PRIMARY MODEL and the lineage split
+# %% Cell 5 - PRIMARY MODEL, centring check, lineage split
 # =============================================================================
 
 banner("PRIMARY MODEL - POOLED LYMPHOCYTES")
@@ -522,8 +708,10 @@ if HAVE_SM:
              for _, g in df.groupby(["sample_id", STRUCT_COL])],
             ignore_index=True) if len(df) else df
 
+    lym_capped = capped(lym)
+
     # ---- PRIMARY -----------------------------------------------------------
-    r = fit_mixed(capped(lym), "radial_centered_core",
+    r = fit_mixed(lym_capped, "radial_centered_core",
                   "PRIMARY: pooled lymphocytes (core)",
                   covariates=["pheno"],
                   note="cell type as covariate so composition cannot drive it")
@@ -537,40 +725,79 @@ if HAVE_SM:
         print(f"    animals      : {r['n_animals_D1MT']} treated, "
               f"{r['n_animals_ref']} untreated")
         print(f"    random effect: {r['random_effects']}")
-        print("\n    Negative means lymphocytes sit closer to the focus core in")
-        print("    treated animals than untreated, after accounting for where")
-        print("    each structure's cells sit in general.")
+
+        # microns conversion on the correct scale
+        ins_t = np.nanmedian([v for (sid, k), v in inscribed_of.items()
+                              if COND_OF.get(sid) == "D1MT"])
+        ins_u = np.nanmedian([v for (sid, k), v in inscribed_of.items()
+                              if COND_OF.get(sid) == "Untreated"])
+        eq_t = np.nanmedian([v for (sid, k), v in equiv_of.items()
+                             if COND_OF.get(sid) == "D1MT"])
+        eq_u = np.nanmedian([v for (sid, k), v in equiv_of.items()
+                             if COND_OF.get(sid) == "Untreated"])
+        c = abs(r["coef_D1MT_vs_ref"])
+        print(f"\n    IN MICRONS. The radial coordinate normalises by the maximum")
+        print(f"    INSCRIBED radius, so that is the scale to convert with.")
+        print(f"      inscribed  : {c * ins_t:.0f} um treated ({ins_t:.0f} um median), "
+              f"{c * ins_u:.0f} um untreated ({ins_u:.0f} um)")
+        print(f"      equivalent : {c * eq_t:.0f} um / {c * eq_u:.0f} um  "
+              f"(overstates, do not quote)")
+
+    # ---- centring check ----------------------------------------------------
+    sub("Centring check: does the result survive a composition-free reference?")
+    print("    The primary reference is cell-weighted and therefore moves with")
+    print("    composition, which differs sharply between arms. If the balanced")
+    print("    coefficient collapses, the effect was partly about what else is")
+    print("    in the focus rather than about lymphocyte position.\n")
+    for col, name in CENTRING_OUTCOMES:
+        r = fit_mixed(lym_capped, col, f"pooled lymphocytes: {name}",
+                      covariates=["pheno"], note=f"centring = {name}")
+        if r:
+            r["family"] = "centring_check"
+            r["centring"] = name
+            model_rows.append(r)
+            print(f"    {name:<32} coef={r['coef_D1MT_vs_ref']:>+8.4f}  "
+                  f"[{r['ci_low']:>+7.4f}, {r['ci_high']:>+7.4f}]  "
+                  f"p={r['p_value']:.4f}")
 
     # ---- lineage split -----------------------------------------------------
     sub("Lineage split")
-    print("    The fold-6 run showed B lineage surviving BH while T cells did")
-    print("    not. This tests whether the pooled effect is class-wide or")
-    print("    carried by B lineage alone.\n")
+    print("    Tests whether the pooled effect is class-wide or carried by one")
+    print("    lineage. Run on both centrings.\n")
     for name, members in [("T lineage", T_LINEAGE), ("B lineage", B_LINEAGE)]:
         d = lym.loc[lym["pheno"].isin(members)]
-        r = fit_mixed(capped(d), "radial_centered_core", f"{name} (core)",
-                      covariates=["pheno"])
-        if r:
-            r["family"] = "lineage"
-            model_rows.append(r)
-            print(f"    {name:<12} coef={r['coef_D1MT_vs_ref']:>+8.4f}  "
-                  f"p={r['p_value']:.4f}  cells={r['n_cells']:>7,}")
+        for col, cname in CENTRING_OUTCOMES:
+            r = fit_mixed(capped(d), col, f"{name} ({cname})",
+                          covariates=["pheno"])
+            if r:
+                r["family"] = ("lineage" if col == "radial_centered_core"
+                               else "lineage_centring_check")
+                r["lineage"] = name
+                r["centring"] = cname
+                model_rows.append(r)
+                print(f"    {name:<12} {cname:<32} "
+                      f"coef={r['coef_D1MT_vs_ref']:>+8.4f}  "
+                      f"p={r['p_value']:.4f}  cells={r['n_cells']:>7,}")
 
-    # ---- per cell type -----------------------------------------------------
-    sub("Per cell type (core only, centered outcome)")
+    # ---- per cell type, circular and non-circular kept apart ---------------
+    sub("Per cell type (core only, primary centring)")
     for p in LYMPHOCYTES + [IDO1_POS, IDO1_NEG, "Neutrophils"]:
         d = core.loc[core["pheno"] == p]
         circ = p in DETECTION_POOL
         r = fit_mixed(capped(d), "radial_centered_core", f"radial: {p}",
                       note="CIRCULAR: defines the foci" if circ else "")
         if r:
-            r["family"] = "per_phenotype"
+            r["family"] = ("per_phenotype_circular" if circ
+                           else "per_phenotype_lymphocyte")
             r["phenotype"] = p
             r["circular"] = circ
             model_rows.append(r)
             print(f"    {p:<26} coef={r['coef_D1MT_vs_ref']:>+8.4f}  "
                   f"p={r['p_value']:.4f}  cells={r['n_cells']:>7,}"
                   f"{'  [circular]' if circ else ''}")
+    print("\n    Circular and non-circular populations are now in SEPARATE BH")
+    print("    families. Mixing them inflated m and blended a descriptive")
+    print("    family with a confirmatory one.")
 
     # ---- secondary: core plus cuff ----------------------------------------
     sub("Secondary: core plus cuff")
@@ -593,6 +820,9 @@ if HAVE_SM:
 
 banner("SENSITIVITY ANALYSES")
 
+print("    These are refits of ONE hypothesis on subsets, not independent")
+print("    tests, so they receive no q-values. Read them as a spread.\n")
+
 sens_rows = []
 if HAVE_SM:
     def capped(df):
@@ -604,9 +834,10 @@ if HAVE_SM:
 
     sub("Leave one animal out")
     print("    31438 behaves like a treated animal on most architectural")
-    print("    measures and has the lowest untreated burden (7.3%). If the")
-    print("    result depends on excluding or including one animal, that must")
-    print("    be visible.\n")
+    print("    measures and has the lowest untreated burden. If the result")
+    print("    depends on one animal, that must be visible. Note that dropping")
+    print("    an animal takes the design to 2 versus 3, so the p-value moves")
+    print("    for reasons of degrees of freedom alone. Read the coefficients.\n")
     for drop in SAMPLE_ORDER:
         d = lym.loc[lym["sample_id"] != drop]
         r = fit_mixed(capped(d), "radial_centered_core",
@@ -621,9 +852,11 @@ if HAVE_SM:
                   f"animals={r['n_animals_D1MT']}v{r['n_animals_ref']}")
 
     sub("Marker robustness")
-    print("    CD4 has a between-slide variance fraction of 0.879, the least")
-    print("    comparable marker carrying any of our populations. The effect")
-    print("    should survive without helper T cells.\n")
+    print("    CD4 is the marker defining helper T cells. Script 03 table 22")
+    print("    puts it at ICC 0.403 on p99 and 0.874 on section medians across")
+    print("    the two scans, and script 01b showed CD4+ running at 4 to 15")
+    print("    percent of T cells on scan_01. The effect should survive without")
+    print("    helper T cells.\n")
     for name, members in [
         ("without Helper T", [p for p in LYMPHOCYTES if p != "Helper T cells"]),
         ("without Tregs", [p for p in LYMPHOCYTES if p != "Tregs"]),
@@ -643,11 +876,20 @@ models = pd.DataFrame(model_rows + sens_rows)
 if len(models):
     models["q_value"] = np.nan
     for fam, g in models.groupby("family"):
+        if fam in NO_BH_FAMILIES:
+            continue
         models.loc[g.index, "q_value"] = benjamini_hochberg(g["p_value"].to_numpy())
+    models["gets_q_value"] = ~models["family"].isin(NO_BH_FAMILIES)
     write_csv(models, "72_models_all.csv")
 
+    sub("BH families")
+    for fam, g in models.groupby("family"):
+        got = "no q (refit of one hypothesis)" if fam in NO_BH_FAMILIES else \
+            f"{int((g['q_value'] < BH_ALPHA).sum())} of {len(g)} at q < {BH_ALPHA}"
+        print(f"    {fam:<32} n={len(g):>3}   {got}")
 
-# %% Cell 7 - radial profiles and per-animal effect sizes
+
+# %% Cell 7 - radial profiles and figures
 # =============================================================================
 
 banner("RADIAL PROFILES, CORE ONLY")
@@ -737,7 +979,9 @@ ax.legend(handles=h, frameon=False, fontsize=FONT_SIZE_LEGEND - 16, loc="best")
 
 ax = axes[1]
 if len(models):
-    g = models.loc[models["family"].isin(["primary", "lineage", "per_phenotype"])]
+    g = models.loc[models["family"].isin(
+        ["primary", "lineage", "per_phenotype_lymphocyte",
+         "per_phenotype_circular"])]
     g = g.sort_values("coef_D1MT_vs_ref")
     yy2 = np.arange(len(g))
     for i, (_, r) in enumerate(g.iterrows()):
@@ -786,8 +1030,8 @@ if len(models) and (models["family"] == "leave_one_out").any():
                        fontsize=FONT_SIZE_TICK - 10)
     ax.invert_yaxis()
     ax.set_xlabel("D1MT effect (95% CI)")
-    ax.set_title("Leave one animal out\n(dashed = full model)",
-                 fontsize=FONT_SIZE_TITLE - 12)
+    ax.set_title("Leave one animal out\n(dashed = full model, no q-values)",
+                 fontsize=FONT_SIZE_TITLE - 14)
     ax.xaxis.grid(True, color=GRID_COLOR, linewidth=1.5); ax.set_axisbelow(True)
     ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
 
@@ -817,17 +1061,80 @@ if len(models) and (models["family"] == "leave_one_out").any():
                  fontsize=FONT_SIZE_TITLE - 6)
     save_fig(fig, "F53_sensitivity")
 
+# ---- F55 the centring check -------------------------------------------------
+if len(models) and (models["family"] == "centring_check").any():
+    fig, axes = plt.subplots(1, 2, figsize=(30, 13),
+                             gridspec_kw={"width_ratios": [1.0, 1.2]})
+    ax = axes[0]
+    g = models.loc[models["family"] == "centring_check"]
+    yy5 = np.arange(len(g))
+    for i, (_, r) in enumerate(g.iterrows()):
+        col = FLAG_COLOR if r["p_value"] < 0.05 else "#777777"
+        ax.plot([r["ci_low"], r["ci_high"]], [i, i], color=col, linewidth=6)
+        ax.scatter([r["coef_D1MT_vs_ref"]], [i], s=420, color=col,
+                   edgecolor="#FFFFFF", linewidth=2, zorder=3)
+        ax.text(r["ci_high"], i, f"  p={r['p_value']:.3f}", va="center",
+                fontsize=FONT_SIZE_ANNOT - 10)
+    ax.axvline(0, color="#000000", linewidth=3.5)
+    ax.set_yticks(yy5)
+    ax.set_yticklabels([r.get("centring", "") for _, r in g.iterrows()],
+                       fontsize=FONT_SIZE_TICK - 10)
+    ax.invert_yaxis()
+    ax.set_xlabel("D1MT effect (95% CI)")
+    ax.set_title("Does the reference point matter?",
+                 fontsize=FONT_SIZE_TITLE - 12)
+    ax.xaxis.grid(True, color=GRID_COLOR, linewidth=1.5); ax.set_axisbelow(True)
+    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+
+    ax = axes[1]
+    for s in SAMPLE_ORDER:
+        d = refs.loc[refs["sample_id"] == s]
+        if not len(d):
+            continue
+        ax.scatter(d["cell_weighted_reference"], d["balanced_reference"],
+                   s=280, color=COLOR_OF[s], marker=MARKER_OF[s],
+                   edgecolor="#FFFFFF", linewidth=2, zorder=3)
+    lo = float(np.nanmin(refs[["cell_weighted_reference", "balanced_reference"]].to_numpy()))
+    hi = float(np.nanmax(refs[["cell_weighted_reference", "balanced_reference"]].to_numpy()))
+    ax.plot([lo, hi], [lo, hi], color="#000000", linestyle="--", linewidth=3)
+    ax.set_xlabel("cell-weighted reference (primary)")
+    ax.set_ylabel("phenotype-balanced reference")
+    ax.set_title("Where the two references sit, per structure",
+                 fontsize=FONT_SIZE_TITLE - 14)
+    style_axes(ax)
+    ax.legend(handles=[Line2D([0], [0], color=COLOR_OF[s], marker=MARKER_OF[s],
+                              markersize=16, linestyle="none",
+                              label=f"{short_label(s)} ({COND_OF[s]})")
+                       for s in SAMPLE_ORDER],
+              frameon=False, fontsize=FONT_SIZE_LEGEND - 16, loc="best")
+    fig.suptitle("Composition-free centring check\n"
+                 "The primary reference is cell-weighted and moves with "
+                 "composition; the balanced one cannot", y=1.04,
+                 fontsize=FONT_SIZE_TITLE - 8)
+    save_fig(fig, "F55_centring_check")
+
 
 # %% Cell 8 - delta distance, normalised family dropped
 # =============================================================================
 
 banner("DELTA DISTANCE (normalised family dropped)")
 
+print("    Script 07 revision 2 measured why. Correlation of each outcome with")
+print("    focus radius: raw median |r| = 0.10, delta 0.11, normalised by")
+print("    equivalent radius 0.36, normalised by inscribed radius 0.30. All")
+print("    twenty normalised correlations are negative, which is systematic")
+print("    over-correction rather than residual confounding.")
+print("    The null comes from script 06 table 53, so it is identical in")
+print("    scripts 06, 07 and 08.\n")
+
 dist_models = pd.DataFrame()
 if RUN_DISTANCE and os.path.exists(NN_NULL_TABLE):
     nulls = pd.read_csv(NN_NULL_TABLE)
     key = ["sample_id", "structure_id", "anchor", "target"]
     if all(c in nulls.columns for c in key + ["null_median_um"]):
+        null_lookup = {(r["sample_id"], int(r["structure_id"]),
+                        r["anchor"], r["target"]): float(r["null_median_um"])
+                       for _, r in nulls.iterrows()}
         rows = []
         for (s, k), g in core.groupby(["sample_id", STRUCT_COL]):
             xy = g[["x", "y"]].to_numpy(float)
@@ -840,17 +1147,14 @@ if RUN_DISTANCE and os.path.exists(NN_NULL_TABLE):
                     ti = np.flatnonzero(ph == t)
                     if not len(ti):
                         continue
-                    d, _ = cKDTree(xy[ti]).query(xy[ai], k=1)
-                    nm = nulls.loc[(nulls["sample_id"] == s)
-                                   & (nulls["structure_id"] == k)
-                                   & (nulls["anchor"] == a)
-                                   & (nulls["target"] == t), "null_median_um"]
-                    if not len(nm):
+                    mu = null_lookup.get((s, int(k), a, t), np.nan)
+                    if not np.isfinite(mu):
                         continue
+                    d, _ = cKDTree(xy[ti]).query(xy[ai], k=1)
                     rows.append(pd.DataFrame({
                         "sample_id": s, "condition": COND_OF[s], STRUCT_COL: k,
                         "anchor": a, "target": t,
-                        "distance_delta_um": np.asarray(d, float) - float(nm.iloc[0]),
+                        "distance_delta_um": np.asarray(d, float) - mu,
                     }))
         if rows:
             dd = pd.concat(rows, ignore_index=True)
@@ -860,8 +1164,8 @@ if RUN_DISTANCE and os.path.exists(NN_NULL_TABLE):
                               note="delta outcome; normalised family dropped")
                 if r:
                     r["anchor"], r["target"] = a, t
+                    r["family"] = "delta_distance_pair"
                     out.append(r)
-            # pooled across lymphocyte targets
             for a in NN_ANCHORS:
                 g = dd.loc[dd["anchor"] == a]
                 r = fit_mixed(g, "distance_delta_um",
@@ -869,11 +1173,14 @@ if RUN_DISTANCE and os.path.exists(NN_NULL_TABLE):
                               covariates=["target"])
                 if r:
                     r["anchor"], r["target"] = a, "pooled"
+                    r["family"] = "delta_distance_pooled"
                     out.append(r)
             dist_models = pd.DataFrame(out)
             if len(dist_models):
-                dist_models["q_value"] = benjamini_hochberg(
-                    dist_models["p_value"].to_numpy())
+                dist_models["q_value"] = np.nan
+                for fam, g in dist_models.groupby("family"):
+                    dist_models.loc[g.index, "q_value"] = benjamini_hochberg(
+                        g["p_value"].to_numpy())
                 write_csv(dist_models, "74_delta_distance_models.csv")
                 sub("Delta distance models, core cells only")
                 print(f"    {'test':<48}{'coef um':>10}{'p':>9}{'q':>9}")
@@ -983,25 +1290,40 @@ if RUN_SPILLOVER_CONTROL:
         print(summ.to_string(index=False))
 
         sub("VERDICT ON THE CO-EXPRESSION RESULT")
-        test_n = int(summ.loc[summ["kind"] == "test",
-                              "n_thresholds_separated"].sum())
-        ctrl_n = int(summ.loc[summ["kind"] == "control",
-                              "n_thresholds_separated"].sum())
-        n_ctrl_pairs = int((summ["kind"] == "control").sum())
-        print(f"    iNOS x Arginase-1 separates at {test_n} of "
-              f"{len(COEXPRESSION_PERCENTILES)} thresholds")
-        print(f"    control pairs separate at {ctrl_n} of "
-              f"{n_ctrl_pairs * len(COEXPRESSION_PERCENTILES)} pair-thresholds")
-        if ctrl_n == 0 and test_n > 0:
-            print("\n    Controls are flat and the test pair separates. The")
-            print("    co-expression result is NOT explained by segmentation")
-            print("    spillover and can be reported.")
-        elif ctrl_n > 0:
-            print("\n    Control pairs ALSO separate by arm. Apparent")
-            print("    co-expression tracks something global, most likely")
-            print("    segmentation spillover driven by the density difference")
-            print("    between arms. The iNOS / Arginase-1 result must be")
-            print("    dropped or reported with this caveat stated plainly.")
+        n_thr = len(COEXPRESSION_PERCENTILES)
+        test_rows = summ.loc[summ["kind"] == "test"]
+        ctrl_rows = summ.loc[summ["kind"] == "control"]
+        test_n = int(test_rows["n_thresholds_separated"].max()) if len(test_rows) else 0
+        ctrl_max = int(ctrl_rows["n_thresholds_separated"].max()) if len(ctrl_rows) else 0
+        ctrl_total = int(ctrl_rows["n_thresholds_separated"].sum())
+        n_ctrl_pairs = int(len(ctrl_rows))
+        expected_chance = CHANCE_SEPARATION_RATE * n_ctrl_pairs * n_thr
+        print(f"    iNOS x Arginase-1 separates at {test_n} of {n_thr} thresholds")
+        print(f"    worst control pair separates at {ctrl_max} of {n_thr}")
+        print(f"    all controls together: {ctrl_total} of "
+              f"{n_ctrl_pairs * n_thr} pair-thresholds")
+        print(f"    expected by chance    : {expected_chance:.1f}, because with")
+        print(f"    three animals per arm complete separation arises with")
+        print(f"    probability {CHANCE_SEPARATION_RATE:.2f} per test even under a")
+        print(f"    clean panel. A single control separation is therefore NOT")
+        print(f"    evidence of spillover on its own.\n")
+        if ctrl_max >= test_n and test_n > 0:
+            print("    VERDICT: at least one control pair separates the arms as")
+            print("    well as or better than the test pair. A macrophage cannot")
+            print("    be both a T and a B cell, so the test pair's separation is")
+            print("    not established as biology. DROP IT, or report it only")
+            print("    with this control alongside.")
+        elif ctrl_total > expected_chance * 2 and test_n > 0:
+            print("    VERDICT: controls separate well above chance. Treat the")
+            print("    test pair as unresolved.")
+        elif test_n > ctrl_max:
+            print("    VERDICT: the test pair separates more than any control")
+            print("    pair does. That is consistent with a real effect, but")
+            print("    control behaviour should still be reported alongside so a")
+            print("    reader can judge the margin.")
+        else:
+            print("    VERDICT: neither the test pair nor the controls separate.")
+            print("    Nothing to report either way.")
 
         # ---- F54 -----------------------------------------------------------
         fig, axes = plt.subplots(1, 2, figsize=(32, 13),
@@ -1074,6 +1396,16 @@ if len(models):
               f"[{r['ci_low']:+.4f}, {r['ci_high']:+.4f}]  p = {r['p_value']:.4f}")
         print(f"  {r['n_cells']:,} cells, {r['n_structures']} structures, "
               f"{r['n_animals_D1MT']} vs {r['n_animals_ref']} animals")
+    cc = models.loc[models["family"] == "centring_check"]
+    if len(cc):
+        print("\nCENTRING CHECK")
+        for _, r in cc.iterrows():
+            print(f"  {r.get('centring', ''):<34} coef {r['coef_D1MT_vs_ref']:+.4f}  "
+                  f"p = {r['p_value']:.4f}")
+        spread = float(cc["coef_D1MT_vs_ref"].max() - cc["coef_D1MT_vs_ref"].min())
+        print(f"  coefficient spread across centrings: {spread:.4f}")
+        print("  If that spread is small relative to the coefficient, the result")
+        print("  is about position rather than about composition.")
 
 sub("How to report this")
 print("  - The outcome is position, not intensity, so the slide confound does")
@@ -1084,16 +1416,19 @@ print("    neutrophil results these positions are not circular.")
 print("  - With three animals per arm the p-value is bounded regardless of cell")
 print("    count. The strength of the claim comes from the effect size, the")
 print("    per-animal consistency, and the sensitivity analyses, not from p.")
-print("  - Read the leave-one-out panel before quoting anything. If dropping")
-print("    31438 changes the conclusion, say so.")
+print("  - Convert radial units to microns with the INSCRIBED radius. The")
+print("    equivalent radius overstates by the shape ratio, about 1.13 treated")
+print("    and 1.22 untreated on this run.")
+print("  - Leave-one-out p-values move because the design goes to 2 versus 3.")
+print("    Quote the coefficient spread, never a single leave-one-out p.")
 
 sub("Still open")
-print("  1. 43111 has one focus against an expert count of two.")
-print("  2. Untreated foci went from 38 to 44 in 43109 at fold 6, so untreated")
-print("     over-segmentation increased. Structure is a random effect, so this")
-print("     adds noise rather than bias, but it is worth a look at F33.")
-print("  3. BALT organisation (Q7) is untouched. The detection is fixed and")
-print("     table 36 now has 24 candidates, 18 CD21+.")
+print("  1. 43111 has one focus against an expert count of two. Its second")
+print("     structure has no myeloid density peak above the prominence gate.")
+print("  2. The exact area-weighted centring needs one extra column from")
+print("     script 04. The balanced centring is the stand-in until then.")
+print("  3. BALT organisation (Q7) is untouched. Table 36 has the candidates and")
+print("     table 36b the gate sensitivity across three definitions.")
 
 banner("DONE")
 sys.stdout = _tee.terminal

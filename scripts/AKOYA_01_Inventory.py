@@ -4,12 +4,46 @@
 AKOYA Phenocycler inventory / schema audit
 Rhesus Mtb + SIV, D1MT-treated (G3) vs untreated (G4), necropsy lung sections
 
-Script 01 of the AKOYA analysis series.
+Script 01 of the AKOYA analysis series. REVISION 2.
 
 PURPOSE
     Pure read-only inventory. Reads the 8 QuPath-exported CSVs, reports what is
     actually in them, and writes summary tables. Does NOT normalize, threshold,
     re-phenotype, or modify anything.
+
+WHAT CHANGED IN REVISION 2 (and why)
+    1. SCAN IDENTITY IS NOW AN OUTPUT COLUMN.
+       Script 02's between-slide versus within-slide variance decomposition keyed
+       its "slide" off the treatment column of 01_file_summary.csv, because this
+       script never wrote a scan identifier anywhere downstream could read it.
+       Slide and treatment are perfectly confounded in this design, so that
+       substitution was harmless arithmetically but it made the resulting
+       quantity impossible to describe honestly: it is the fraction of variance
+       explained by arm, which is batch and biology combined, not batch alone.
+       This script now writes scan_image_value (the raw Image string, which is
+       the join key) and scan_id (a short stable label) so script 02 can key on
+       the acquisition rather than on the treatment label.
+
+       It also warns when a section file carries more than one Image value.
+       Script 02 previously took df[Image].iloc[0], which is silently wrong if a
+       file spans more than one acquisition.
+
+    2. SLIDE POSITION IS NOW AN OUTPUT COLUMN.
+       The exclusion of G3_43102 and G4_43112 rests on their being the
+       position-1 section of their scan, flush against the scan boundary, with
+       the shortest Y span. Those quantities were reconstructed inside script 02
+       every time they were needed. They are inventory facts, so they belong
+       here: slide_position_rank, y_span_um, and y_offset_from_scan_min_um.
+       Rank 1 is the smallest y_min within a scan, matching the convention
+       script 02 already used.
+
+    3. SCAN IS PROPAGATED INTO THE LONG TABLES.
+       04_phenotype_counts_long.csv and 06_marker_stats_long.csv now carry
+       scan_id and scan_image_value so they are self-describing and downstream
+       scripts do not have to join back through the file summary.
+
+    Nothing else changed. No thresholds, no flag rules, no filtering. This
+    script still modifies nothing and drops nothing.
 
 WHAT IT ANSWERS
     - How many cells per slide, per animal, per group
@@ -17,12 +51,13 @@ WHAT IT ANSWERS
     - Are the column sets identical across all 8 files
     - What are the exact Phenotype label strings, including invisible characters
     - Does Parent encode animal ID only, or are there sub-regions (ROIs) per slide
+    - Which acquisition (scan) each section came from, and where it sat on it
     - Coordinate extents, tissue bounding box, cell density
     - Per-marker intensity distributions per slide, and any failed / near-zero markers
 
 OUTPUTS (written to OUT_DIR/tables/)
     00_audit_report.txt            full stdout mirror
-    01_file_summary.csv            one row per file
+    01_file_summary.csv            one row per file, now with scan and position
     02_column_audit.csv            one row per column, presence across files
     03_phenotype_labels_repr.csv   exact label strings with codepoint inspection
     04_phenotype_counts_long.csv   tidy counts: file x phenotype
@@ -30,10 +65,11 @@ OUTPUTS (written to OUT_DIR/tables/)
     06_marker_stats_long.csv       tidy per-file per-marker distribution stats
     07_marker_flags.csv            markers flagged as failed / saturated / suspect
     08_image_parent_values.csv     unique Image and Parent values per file
+    09_scan_layout.csv             one row per file: scan, position, Y geometry
 
 USAGE
     conda activate sc_pre
-    python akoya_01_inventory.py
+    python AKOYA_01_Inventory.py
 
 Author: Jake Lehle, Kaushal Lab, Texas Biomed
 """
@@ -68,6 +104,16 @@ CENTROID_Y_PREFIX = "Centroid Y"
 PHENOTYPE_COL = "Phenotypes"
 PARENT_COL = "Parent"
 IMAGE_COL = "Image"
+
+# ---- scan identity ----------------------------------------------------------
+# The Image column is treated as the acquisition identifier. Each section file is
+# expected to carry exactly one Image value. If a file carries more than one, the
+# modal value is used as the scan and a warning is raised, because any downstream
+# per-scan analysis is then only approximately right.
+SCAN_ID_PREFIX = "scan"              # short stable label: scan_01, scan_02, ...
+# Position rank 1 is the section with the smallest y_min on its scan. This is the
+# same convention script 02 used when it identified the position-1 sections.
+POSITION_RANK_ASCENDING_Y = True
 
 # Thresholds for flagging suspect markers (diagnostic only, nothing is dropped)
 ZERO_FRAC_FAIL = 0.98      # >= this fraction of exact zeros -> likely failed cycle
@@ -255,11 +301,12 @@ os.makedirs(TABLE_DIR, exist_ok=True)
 _tee = Tee(os.path.join(TABLE_DIR, "00_audit_report.txt"))
 sys.stdout = _tee
 
-banner("AKOYA INVENTORY / SCHEMA AUDIT")
+banner("AKOYA INVENTORY / SCHEMA AUDIT (revision 2)")
 print(f"Run time   : {datetime.now().isoformat(timespec='seconds')}")
 print(f"Data dir   : {DATA_DIR}")
 print(f"Output dir : {TABLE_DIR}")
 print(f"Group map  : {GROUP_MAP}")
+print(f"Scan key   : the '{IMAGE_COL}' column, modal value per file")
 
 csv_paths = sorted(glob.glob(os.path.join(DATA_DIR, "*.csv")))
 if len(csv_paths) == 0:
@@ -323,16 +370,34 @@ for sid in sorted(file_meta.keys()):
         print(f"    NOTE: {n_any_na:,} rows contain at least one NaN")
 
     # --- Image and Parent ---------------------------------------------------
+    # The modal Image value becomes this section's scan. A file carrying more
+    # than one Image value is reported loudly, because every per-scan analysis
+    # downstream assumes one acquisition per section file.
     img_vals, par_vals = [], []
+    scan_image_value = "UNKNOWN"
+    modal_image_pct = np.nan
     if IMAGE_COL in df.columns:
-        img_vals = sorted(df[IMAGE_COL].dropna().unique().tolist())
+        img_counts = df[IMAGE_COL].dropna().value_counts()
+        img_vals = sorted(img_counts.index.tolist())
         print(f"    unique Image values  : {len(img_vals)}")
         for v in img_vals[:10]:
             print(f"        {v}")
         if len(img_vals) > 10:
             print(f"        ... and {len(img_vals) - 10} more")
+        if len(img_counts) > 0:
+            scan_image_value = str(img_counts.index[0])
+            modal_image_pct = 100.0 * float(img_counts.iloc[0]) / n_rows
+            print(f"    scan (modal Image)   : {scan_image_value}")
+            if len(img_counts) > 1:
+                print(f"    WARNING: {len(img_counts)} distinct Image values in one "
+                      f"section file. The modal value covers "
+                      f"{modal_image_pct:.1f}% of cells and is being used as the "
+                      f"scan. Any per-scan analysis is approximate for this file.")
+        else:
+            print(f"    WARNING: '{IMAGE_COL}' column present but entirely NaN")
     else:
-        print(f"    WARNING: no '{IMAGE_COL}' column")
+        print(f"    WARNING: no '{IMAGE_COL}' column. Scan set to UNKNOWN, which "
+              f"will collapse every file onto one scan downstream.")
 
     if PARENT_COL in df.columns:
         par_counts = df[PARENT_COL].fillna("<NA>").value_counts()
@@ -404,6 +469,8 @@ for sid in sorted(file_meta.keys()):
         "group_prefix": meta["group_prefix"],
         "animal_id": meta["animal_id"],
         "treatment": meta["treatment"],
+        "scan_image_value": scan_image_value,
+        "modal_image_pct_of_cells": modal_image_pct,
         "in_scrnaseq": meta["in_scrnaseq"],
         "suspected_other_series": meta["suspected_other_series"],
         "file_size_mb": meta["file_size_mb"],
@@ -430,6 +497,104 @@ if len(frames) == 0:
     sys.stdout = _tee.terminal
     _tee.close()
     sys.exit(1)
+
+
+# %% Cell 4b - scan identity and section position on the scan
+# =============================================================================
+# These are inventory facts, not analysis. They are derived here once so that no
+# downstream script has to reconstruct them, and so that "slide" never again has
+# to be approximated by "treatment".
+
+banner("SCAN IDENTITY AND SECTION POSITION")
+
+# ---- short stable scan ids --------------------------------------------------
+scan_values = sorted(file_summary["scan_image_value"].unique().tolist())
+scan_id_map = {v: f"{SCAN_ID_PREFIX}_{i:02d}"
+               for i, v in enumerate(scan_values, start=1)}
+file_summary["scan_id"] = file_summary["scan_image_value"].map(scan_id_map)
+
+print(f"    {len(scan_values)} distinct scan(s) across {len(file_summary)} section file(s)")
+for v in scan_values:
+    members = file_summary.loc[file_summary["scan_image_value"] == v, "sample_id"].tolist()
+    print(f"      {scan_id_map[v]}  n={len(members)}  {v}")
+    print(f"                 sections: {', '.join(sorted(members))}")
+
+if len(scan_values) == 1:
+    print("\n    WARNING: every file resolved to a single scan. A between-scan "
+          "versus within-scan variance decomposition is not possible.")
+
+# ---- geometry within each scan ----------------------------------------------
+file_summary["y_span_um"] = file_summary["y_max_um"] - file_summary["y_min_um"]
+file_summary["x_span_um"] = file_summary["x_max_um"] - file_summary["x_min_um"]
+file_summary["slide_position_rank"] = np.nan
+file_summary["n_sections_on_scan"] = np.nan
+file_summary["y_offset_from_scan_min_um"] = np.nan
+
+for scan, g in file_summary.groupby("scan_id"):
+    file_summary.loc[g.index, "n_sections_on_scan"] = len(g)
+    have_y = g.loc[g["y_min_um"].notna()]
+    if not len(have_y):
+        print(f"\n    WARNING: {scan} has no usable Y coordinates. Position rank "
+              f"left as NaN for its sections.")
+        continue
+    ordered = have_y.sort_values("y_min_um", ascending=POSITION_RANK_ASCENDING_Y)
+    for rank, idx in enumerate(ordered.index, start=1):
+        file_summary.loc[idx, "slide_position_rank"] = rank
+    file_summary.loc[have_y.index, "y_offset_from_scan_min_um"] = (
+        have_y["y_min_um"] - float(have_y["y_min_um"].min()))
+
+# ---- report -----------------------------------------------------------------
+sub("Section layout on each scan (rank 1 = smallest y_min)")
+print(f"    {'sample_id':<14}{'scan':<10}{'treatment':<12}{'pos':>5}"
+      f"{'y_min':>12}{'y_max':>12}{'y_span':>12}{'y_offset':>12}")
+print("    " + "-" * 89)
+layout = file_summary.sort_values(["scan_id", "slide_position_rank"])
+for _, r in layout.iterrows():
+    pos = "na" if pd.isna(r["slide_position_rank"]) else f"{int(r['slide_position_rank'])}"
+    print(f"    {r['sample_id']:<14}{str(r['scan_id']):<10}{r['treatment']:<12}"
+          f"{pos:>5}{r['y_min_um']:>12,.1f}{r['y_max_um']:>12,.1f}"
+          f"{r['y_span_um']:>12,.1f}{r['y_offset_from_scan_min_um']:>12,.1f}")
+
+print("\n    y_offset_from_scan_min_um near zero means the section sits flush")
+print("    against the bottom edge of its scan. That, together with a short")
+print("    y_span, is the geometric part of the position-1 argument. Whether a")
+print("    section is also globally dim is a marker question and is answered in")
+print("    script 02, not here.")
+
+# ---- is scan confounded with treatment? -------------------------------------
+sub("Is scan confounded with treatment?")
+ct = pd.crosstab(file_summary["scan_id"], file_summary["treatment"])
+print(ct.to_string())
+scans_per_treatment = file_summary.groupby("treatment")["scan_id"].nunique()
+treatments_per_scan = file_summary.groupby("scan_id")["treatment"].nunique()
+fully_confounded = bool((treatments_per_scan == 1).all()
+                        and (scans_per_treatment == 1).all())
+if fully_confounded:
+    print("\n    CONFOUNDED. Each scan carries exactly one treatment arm and each")
+    print("    arm sits on exactly one scan. Between-scan variance and between-arm")
+    print("    variance are the same quantity in this design, so any decomposition")
+    print("    that follows measures batch and biology together and must be")
+    print("    described that way. It cannot isolate batch.")
+elif bool((treatments_per_scan == 1).all()):
+    print("\n    PARTIALLY CONFOUNDED. Every scan is single-arm, but at least one")
+    print("    arm spans more than one scan, so within-arm between-scan variance")
+    print("    is estimable.")
+else:
+    print("\n    NOT CONFOUNDED. At least one scan carries both arms, so batch and")
+    print("    biology are separable.")
+
+scan_layout = file_summary[[
+    "sample_id", "animal_id", "treatment", "scan_id", "scan_image_value",
+    "n_sections_on_scan", "slide_position_rank",
+    "x_min_um", "x_max_um", "x_span_um",
+    "y_min_um", "y_max_um", "y_span_um", "y_offset_from_scan_min_um",
+    "n_cells", "bbox_area_mm2", "cells_per_mm2_bbox",
+]].sort_values(["scan_id", "slide_position_rank"])
+
+# lookups reused by the long tables below
+SCAN_ID_OF = dict(zip(file_summary["sample_id"], file_summary["scan_id"]))
+SCAN_IMAGE_OF = dict(zip(file_summary["sample_id"], file_summary["scan_image_value"]))
+POSITION_OF = dict(zip(file_summary["sample_id"], file_summary["slide_position_rank"]))
 
 
 # %% Cell 5 - cross-file column comparison
@@ -547,6 +712,9 @@ for sid in sorted(frames):
             "group_prefix": meta["group_prefix"],
             "animal_id": meta["animal_id"],
             "treatment": meta["treatment"],
+            "scan_id": SCAN_ID_OF.get(sid, "UNKNOWN"),
+            "scan_image_value": SCAN_IMAGE_OF.get(sid, "UNKNOWN"),
+            "slide_position_rank": POSITION_OF.get(sid, np.nan),
             "phenotype": lab,
             "n_cells": int(c),
             "pct_of_slide": 100.0 * c / total,
@@ -625,7 +793,11 @@ for sid in sorted(frames):
         if n_valid == 0:
             marker_rows.append({
                 "sample_id": sid, "treatment": meta["treatment"],
-                "animal_id": meta["animal_id"], "column": col,
+                "animal_id": meta["animal_id"],
+                "scan_id": SCAN_ID_OF.get(sid, "UNKNOWN"),
+                "scan_image_value": SCAN_IMAGE_OF.get(sid, "UNKNOWN"),
+                "slide_position_rank": POSITION_OF.get(sid, np.nan),
+                "column": col,
                 "marker": marker, "compartment": compartment,
                 "n_valid": 0, "n_na": int(v.isna().sum()),
                 "frac_zero": np.nan, "mean": np.nan, "sd": np.nan, "cv": np.nan,
@@ -640,6 +812,9 @@ for sid in sorted(frames):
             "sample_id": sid,
             "treatment": meta["treatment"],
             "animal_id": meta["animal_id"],
+            "scan_id": SCAN_ID_OF.get(sid, "UNKNOWN"),
+            "scan_image_value": SCAN_IMAGE_OF.get(sid, "UNKNOWN"),
+            "slide_position_rank": POSITION_OF.get(sid, np.nan),
             "column": col,
             "marker": marker,
             "compartment": compartment,
@@ -661,6 +836,7 @@ marker_stats = pd.DataFrame(marker_rows)
 print(f"Computed distribution stats for {marker_stats['column'].nunique()} "
       f"intensity columns across {marker_stats['sample_id'].nunique()} slides "
       f"({len(marker_stats):,} rows).")
+
 
 # ---- flags ------------------------------------------------------------------
 def flag_row(r):
@@ -718,6 +894,8 @@ for col, r in worst.iterrows():
           f"fold={r['fold_range']:>8.1f}")
 print("\n    Large fold ranges mean a shared intensity threshold across slides would be "
       "unsafe. Per-slide normalization will need to be settled before any gating.")
+print("    This spread mixes scan and section. Script 02 splits it into the")
+print("    between-scan and within-scan parts, keyed on scan_id from this run.")
 
 
 # %% Cell 8 - write outputs and summarize
@@ -740,6 +918,7 @@ write_csv(flagged if len(flagged) > 0 else marker_stats.head(0),
           os.path.join(TABLE_DIR, "07_marker_flags.csv"))
 write_csv(pd.DataFrame(image_parent_rows),
           os.path.join(TABLE_DIR, "08_image_parent_values.csv"))
+write_csv(scan_layout, os.path.join(TABLE_DIR, "09_scan_layout.csv"))
 
 banner("SUMMARY")
 print(f"Files loaded              : {len(frames)} / {len(csv_paths)}")
@@ -750,6 +929,11 @@ for trt in sorted(file_summary["treatment"].unique()):
     sl = file_summary.loc[file_summary["treatment"] == trt]
     print(f"  {trt:<12} {len(sl)} slide(s), {sl['n_cells'].sum():>10,} cells "
           f"(range {sl['n_cells'].min():,} to {sl['n_cells'].max():,})")
+print(f"Distinct scans            : {len(scan_values)}")
+for scan, g in file_summary.groupby("scan_id"):
+    arms = sorted(g["treatment"].unique())
+    print(f"  {scan:<12} {len(g)} section(s), arms: {', '.join(arms)}")
+print(f"Scan/treatment confounded : {fully_confounded}")
 print(f"Column set identical      : {n_shared == len(col_universe)}")
 print(f"Intensity columns         : {len(intensity_cols)}")
 print(f"Distinct phenotype labels : {len(label_repr_tbl)}")
@@ -761,6 +945,15 @@ print("  2. Are the Phenotype labels the final 13-phenotype call, or something c
 print("  3. Which phenotypes clear the per-animal cell count needed for")
 print("     nearest-neighbour statistics in every animal?")
 print("  4. Which markers need per-slide normalization before any gating?")
+print("  5. Does every section file resolve to exactly one scan, and does the")
+print("     section layout on each scan match what was physically mounted?")
+
+sub("What downstream now reads from here")
+print("  01_file_summary.csv  scan_id, scan_image_value, slide_position_rank")
+print("                       -> script 02 Q2 keys its variance decomposition on")
+print("                          scan_id instead of treatment")
+print("  09_scan_layout.csv   the geometric half of the position-1 exclusion")
+print("                       argument, in one table")
 
 print(f"\nAll tables written to: {TABLE_DIR}")
 banner("DONE")

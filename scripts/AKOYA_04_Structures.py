@@ -1,31 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-AKOYA Phenocycler - STRUCTURE DEFINITION (revision 3, dual definition)
+AKOYA Phenocycler - STRUCTURE DEFINITION (dual definition)
 Rhesus Mtb + SIV, D1MT-treated (G3) vs untreated (G4), necropsy lung sections
 
-Script 04 of the AKOYA analysis series. REVISION 3.
+Script 04 of the AKOYA analysis series. REVISION 4.
 
 WHY TWO DEFINITIONS
-    Revision 2's density landscape settled the question. The densest point in any
-    D1MT section is 4,021 myeloid cells/mm^2. The densest in any untreated
-    section is 19,596. Untreated lesions run three to five fold denser at peak,
-    so no single absolute threshold can serve both arms: set it for untreated and
-    the treated arm returns zero, set it for treated and the untreated sections
-    flood.
+    The density landscape settled this. The densest point in any D1MT section is
+    about 4,000 myeloid cells/mm^2. The densest in any untreated section is about
+    19,600. Untreated lesions run three to five fold denser at peak, so no single
+    absolute threshold can serve both arms: set it for untreated and the treated
+    arm returns zero, set it for treated and the untreated sections flood.
 
     But every treated section does contain one or two foci sitting 8 to 16 fold
-    above its own tissue background, with a sharp drop to the next peak:
-        43106  3,243 then 1,534   (background 205,  15.8x)
-        43111  4,021 then 1,479   (background 487,   8.3x)
-        43118  2,521 then 1,925   (background 282,   8.9x)
-    Those are real, discrete, isolated foci operating at a different absolute
-    scale. So we use two definitions for two different questions:
+    above its own tissue background, with a sharp drop to the next peak. Those
+    are real, discrete, isolated foci operating at a different absolute scale. So
+    we use two definitions for two different questions:
 
     DEFINITION 1 - ABSOLUTE, for BURDEN
         Fixed density threshold applied identically to every section. Answers
         "how much granuloma-density tissue is there". The near-zero result in the
-        treated arm IS the finding, not a failure of detection.
+        treated arm IS the finding, not a failure of detection. The threshold is
+        hard-coded on purpose and is not swept.
 
     DEFINITION 2 - RELATIVE, for ARCHITECTURE
         Local maxima that rise a set fold above their OWN section's median, each
@@ -42,14 +39,88 @@ CRITICAL DESIGN CONSTRAINT (unchanged)
     Neither definition uses IDO1. Both run on pooled myeloid density. IDO1 is
     measured about each structure afterwards. F35 validates capture independently.
 
+WHAT CHANGED IN REVISION 4 (and why)
+
+    1. THE DENSITY MAP IS EDGE-CORRECTED.
+        density_map smoothed a zero-padded count array with mode="constant" and
+        never renormalised by the tissue mask. Every cell within roughly one
+        bandwidth of a tissue boundary therefore sat in a neighbourhood that was
+        partly empty non-tissue space, and its local density was pulled down
+        toward zero by however much of the kernel fell outside the tissue. A
+        focus at the edge of a section is systematically under-detected, and
+        because the arms differ in how fragmented their tissue is, the size of
+        that bias can differ by arm.
+
+        The fix is normalized convolution: smooth the counts, smooth the tissue
+        occupancy with the same kernel, divide. Inside the tissue the occupancy
+        weight is 1 and nothing changes; at a boundary it is less than 1 and the
+        density is restored to what it would be if the tissue continued.
+        EDGE_MIN_WEIGHT floors the denominator so thin protrusions cannot
+        explode.
+
+        Both maps are computed. Detection runs on the corrected one, and table
+        32 reports the uncorrected numbers alongside so the size of the change
+        is a measured quantity rather than an assumption. Expect burden
+        percentages to move.
+
+    2. EVERY FOCUS NOW CARRIES ITS MAXIMUM INSCRIBED RADIUS.
+        The radial coordinate normalises by the maximum inscribed radius, that
+        is dt.max() inside each focus, but downstream work converted radial
+        units to microns using equiv_radius_um. For any non-circular shape the
+        inscribed radius is smaller than the equivalent radius, so that
+        conversion overstates the effect in microns. max_inscribed_radius_um and
+        shape_ratio (equivalent over inscribed, 1.0 for a disc) are now exported
+        so the conversion can be done correctly and so the shape spread can be
+        checked as a source of arm-dependent noise in the radial outcome.
+
+    3. LOCAL MAXIMA ARE DEDUPLICATED.
+        find_local_maxima used dens == maximum_filter(dens), which returns EVERY
+        pixel of a flat maximum. On a plateau that is several adjacent seeds for
+        one peak, and watershed then splits one focus into pieces. Connected
+        plateau components are now collapsed to a single representative pixel.
+        The number collapsed is reported per section, which is a candidate
+        explanation for untreated over-segmentation rising at fold 6.
+
+    4. RECORDED AREA MATCHES ASSIGNED AREA.
+        area_um2 and n_cells were computed from `region` but the label array was
+        written with `region & (labels == 0)`, so when hole filling pushed two
+        regions into contact the recorded size of the later focus exceeded what
+        it actually got. Geometry is now computed from the pixels the focus
+        actually receives, and the number of contested pixels is reported.
+
+    5. THE EXCLUSION BLOCK MATCHES SCRIPT 03.
+        The reason strings now quote the composition-controlled rank statistic
+        from script 02 revision 2 rather than the composition-sensitive z
+        fractions, and the false claim about shortest Y spans is gone.
+
+    6. OPTIONAL BALT ALTERNATIVE GATES (RUN_BALT_ALTERNATIVES).
+        The primary BALT definition is unchanged. Two alternative detections are
+        run alongside and written to a separate table: B cells with POOLED T
+        lineage instead of helper T only, and B cells alone. Helper T cells are
+        a CD4 call, and the inventory shows CD4-positive running at 4 to 15
+        percent of T cells on scan_01. If the candidate counts hold across all
+        three gates the arm comparison is safe; if they do not, the primary gate
+        is partly reading CD4 staining. This is a diagnostic. It does not change
+        balt_id and nothing downstream reads it yet. It is here so the BALT
+        session does not require another full rerun of this script.
+
+        BALT detection depends only on lymphocyte density and each section's own
+        CD21 distribution, never on FOCUS_FOLD_OVER_BACKGROUND, so candidate
+        counts are invariant to the fold setting. Only min_dist_to_focus_um
+        changes when the foci change.
+
+    7. NAMING.
+        The script wrote to structures_rev4 while calling itself revision 3 and
+        naming its log 00_structures_rev3_report.txt. All three now agree.
+
 OUTPUTS
     figures/  F30 .. F37
-    tables/   33 .. 38
+    tables/   32 .. 36b
     cell_assignments/<section>_cell_structures.csv
 
 USAGE
     conda activate sc_pre
-    python AKOYA_04_Structures_rev3.py
+    python AKOYA_04_Structures.py
 
 Author: Jake Lehle, Kaushal Lab, Texas Biomed
 """
@@ -60,18 +131,26 @@ Author: Jake Lehle, Kaushal Lab, Texas Biomed
 # =============================================================================
 
 DATA_DIR = "/master/jlehle/WORKING/AKOYA/data"
+INVENTORY_TABLE_DIR = "/master/jlehle/WORKING/AKOYA/inventory/tables"
 OUT_DIR = "/master/jlehle/WORKING/AKOYA/structures_rev4"
 
+# ---- exclusion, kept in step with script 03 ---------------------------------
 EXCLUDE_SECTIONS = {
-    "G3_43102": ("Position-1 section on the G3 scan. Globally dim: 67.2% of 67 "
-                 "markers below z=-0.8 within slide, median z=-1.04."),
-    "G4_43112": ("Position-1 section on the G4 scan. Globally dim: 68.7% of 67 "
-                 "markers below z=-0.8 within slide, median z=-1.21."),
+    "G3_43102": ("Position-1 section on scan_01 (D1MT). Dimmest of its four "
+                 "sections in 48.8% of composition-controlled comparisons "
+                 "against a 25% null. No other section on that scan exceeds "
+                 "27.8%. Zero IDO1+ macrophages called."),
+    "G4_43112": ("Position-1 section on scan_02 (Untreated). Dimmest of its "
+                 "four sections in 56.3% of composition-controlled comparisons "
+                 "against a 25% null. No other section on that scan exceeds "
+                 "23.3%. Zero IDO1+ macrophages called."),
 }
 
 CONDITION_ORDER = ["D1MT", "Untreated"]
 CONDITION_COLORS = {"D1MT": "#2C7FB8", "Untreated": "#D95F02"}
 GROUP_MAP = {"G3": "D1MT", "G4": "Untreated"}
+SCAN_COL = "scan_id"
+POSITION_COL = "slide_position_rank"
 
 EXPERT_COUNTS = {
     "G3_43106": 1, "G3_43111": 2, "G3_43118": 2,
@@ -106,6 +185,7 @@ CD68_LINEAGE = [IDO1_POS_PHENO, IDO1_NEG_PHENO]
 MYELOID_FOR_DETECTION = [IDO1_POS_PHENO, IDO1_NEG_PHENO,
                          "CD163+ Macrophages", "Neutrophils"]
 BALT_B, BALT_T, PLASMA = "B cells", "Helper T cells", "Plasma cells"
+T_LINEAGE = ["Helper T cells", "CD4- T cells", "Tregs"]
 
 PHENOTYPE_ORDER = [
     IDO1_POS_PHENO, IDO1_NEG_PHENO, "CD163+ Macrophages", "Neutrophils",
@@ -125,8 +205,18 @@ PHENOTYPE_COLORS = {
 GRID_UM = 25.0
 DENSITY_BANDWIDTH_UM = 75.0     # used by BOTH definitions, so they are comparable
 
+# ---- edge correction --------------------------------------------------------
+# Normalized convolution. Without it, density within roughly one bandwidth of a
+# tissue boundary is damped by however much of the Gaussian kernel falls on
+# empty non-tissue space.
+EDGE_CORRECTION = True
+EDGE_MIN_WEIGHT = 0.25          # floor on the occupancy weight, so a thin
+                                # protrusion cannot divide by nearly zero
+REPORT_EDGE_COMPARISON = True   # compute the uncorrected map too, for table 32
+
 # =============================================================================
 # DEFINITION 1 - ABSOLUTE, for burden
+# HARD-CODED ON PURPOSE. Not swept, not tuned. See the docstring.
 # =============================================================================
 BURDEN_THRESHOLD = 3000.0           # myeloid cells / mm^2, identical everywhere
 BURDEN_MIN_AREA_UM2 = 30000.0       # 98 um equivalent radius
@@ -144,6 +234,7 @@ FOCUS_MIN_AREA_UM2 = 10000.0        # 56 um equivalent radius
 FOCUS_MIN_CELLS = 40
 FOCUS_FILL_HOLES = True             # keeps necrotic acellular centres
 CUFF_WIDTH_UM = 150.0
+DEDUPLICATE_PLATEAU_PEAKS = True    # collapse flat maxima to one seed each
 
 # background statistic each peak is compared against
 BACKGROUND_STAT = "median"          # "median" or "p75"
@@ -154,13 +245,24 @@ SWEEP_FOLDS = [4.0, 6.0, 8.0, 10.0, 15.0]
 SWEEP_HALF_FRACTIONS = [0.3, 0.4, 0.5, 0.6]
 SWEEP_MIN_AREAS_UM2 = [5000, 10000, 20000, 30000]
 
-# ---- BALT detection (unchanged) --------------------------------------------
+# ---- BALT detection ---------------------------------------------------------
+# Primary definition unchanged. Detection depends only on lymphocyte density and
+# each section's own CD21 distribution, so it is invariant to the focus fold
+# setting; only min_dist_to_focus_um moves when the foci move.
 BALT_BANDWIDTH_UM = 75.0
 BALT_B_THRESHOLD = 800.0
 BALT_T_THRESHOLD = 300.0
 BALT_MIN_AREA_UM2 = 15000.0
 BALT_MIN_B_CELLS = 40
 CD21_FOLLICLE_RATIO = 1.5
+
+# Diagnostic only. Does not change balt_id.
+RUN_BALT_ALTERNATIVES = True
+BALT_ALT_GATES = [
+    ("primary_B_and_helperT", [BALT_B], [BALT_T], BALT_B_THRESHOLD, BALT_T_THRESHOLD),
+    ("B_and_pooled_T", [BALT_B], T_LINEAGE, BALT_B_THRESHOLD, BALT_T_THRESHOLD),
+    ("B_only", [BALT_B], None, BALT_B_THRESHOLD, None),
+]
 
 # ---- plotting ---------------------------------------------------------------
 MAX_POINTS_PER_SECTION = 80000
@@ -318,10 +420,26 @@ def make_grid(x, y, pitch):
     return x0, y0, gx, gy, (int(gy.max()) + 2, int(gx.max()) + 2)
 
 
-def density_map(gx, gy, shape, mask, bandwidth_um, pitch):
+def density_map(gx, gy, shape, mask, bandwidth_um, pitch, occ=None,
+                edge_correct=True, min_weight=EDGE_MIN_WEIGHT):
+    """
+    Kernel density of the selected cells, in cells per mm^2.
+
+    Without edge correction the Gaussian is applied to a zero-padded count
+    array, so any pixel within roughly one bandwidth of the tissue boundary
+    averages in empty non-tissue space and reads low. With edge correction the
+    tissue occupancy is smoothed by the same kernel and used as a denominator,
+    which is normalized convolution: inside the tissue the weight is 1 and
+    nothing changes, at a boundary it is less than 1 and the estimate is
+    restored to what it would be if the tissue continued.
+    """
     counts = np.zeros(shape, dtype=float)
     np.add.at(counts, (gy[mask], gx[mask]), 1.0)
-    sm = ndi.gaussian_filter(counts, sigma=bandwidth_um / pitch, mode="constant")
+    sigma = bandwidth_um / pitch
+    sm = ndi.gaussian_filter(counts, sigma=sigma, mode="constant")
+    if edge_correct and occ is not None:
+        w = ndi.gaussian_filter(occ.astype(float), sigma=sigma, mode="constant")
+        sm = sm / np.maximum(w, min_weight)
     return sm / ((pitch * pitch) / 1e6)
 
 
@@ -336,8 +454,7 @@ def partition_by_markers(dens, markers, territory):
     Assign every pixel of `territory` to one marker.
     Uses skimage watershed on the inverted density when available, which follows
     the density landscape properly. Falls back to a Euclidean nearest-marker
-    partition (Voronoi on the seeds) using scipy alone, which is a reasonable
-    approximation for compact foci.
+    partition (Voronoi on the seeds) using scipy alone.
     """
     if HAVE_SKIMAGE:
         return _sk_watershed(-dens, markers=markers, mask=territory), "watershed"
@@ -346,37 +463,72 @@ def partition_by_markers(dens, markers, territory):
     return np.where(territory, part, 0), "edt_voronoi"
 
 
-def find_local_maxima(dens, occ, sep_px):
+def find_local_maxima(dens, occ, sep_px, deduplicate=True):
+    """
+    Returns (rows, cols, values, n_raw, n_collapsed).
+
+    dens == maximum_filter(dens) marks every pixel of a flat maximum, not one
+    per peak. On a plateau that hands watershed several adjacent seeds for a
+    single peak and one focus gets split. Connected plateau components are
+    collapsed to a single representative, the pixel closest to the component
+    centroid.
+    """
     mx = ndi.maximum_filter(dens, size=2 * sep_px + 1, mode="constant")
     ispeak = (dens == mx) & occ & (dens > 0)
-    py, px = np.nonzero(ispeak)
-    return py, px, dens[py, px]
+    n_raw = int(ispeak.sum())
+    if not deduplicate or n_raw == 0:
+        py, px = np.nonzero(ispeak)
+        return py, px, dens[py, px], n_raw, 0
+    lab, n = ndi.label(ispeak, structure=np.ones((3, 3), dtype=int))
+    ys, xs = [], []
+    # centre-of-mass per component, snapped to the nearest member pixel
+    coms = ndi.center_of_mass(ispeak, lab, list(range(1, n + 1)))
+    objs = ndi.find_objects(lab)
+    for k, (com, sl) in enumerate(zip(coms, objs), start=1):
+        sub_lab = lab[sl] == k
+        yy, xx = np.nonzero(sub_lab)
+        yy = yy + sl[0].start
+        xx = xx + sl[1].start
+        d2 = (yy - com[0]) ** 2 + (xx - com[1]) ** 2
+        j = int(np.argmin(d2))
+        ys.append(int(yy[j])); xs.append(int(xx[j]))
+    py = np.asarray(ys, dtype=int)
+    px = np.asarray(xs, dtype=int)
+    return py, px, dens[py, px], n_raw, n_raw - len(py)
 
 
 def detect_foci(dens, occ, gx, gy, fold_min, half_frac, min_area, min_cells,
-                sep_px, fill_holes=True, background_stat="median"):
+                sep_px, fill_holes=True, background_stat="median",
+                deduplicate=True):
     """
-    DEFINITION 2. Returns (labels, peak_records, method_used).
+    DEFINITION 2. Returns (labels, peak_records, method_used, diagnostics).
 
     Each surviving local maximum becomes one focus whose boundary is drawn where
     density falls to `half_frac` of THAT PEAK's value. Watershed keeps adjacent
-    foci separate. Everything is relative to the section's own background, so a
-    3,243 peak in treated tissue and a 13,499 peak in untreated tissue each get a
-    boundary at their own natural edge.
+    foci separate. Everything is relative to the section's own background.
+
+    Geometry is computed from the pixels a focus ACTUALLY receives, not from the
+    candidate region, so table 35 cannot disagree with the label array or with
+    the per-cell assignments.
     """
+    diag = {"n_peaks_raw": 0, "n_peaks_collapsed": 0, "n_peaks_kept": 0,
+            "n_contested_pixels": 0}
     vals = dens[occ]
     if not vals.size:
-        return np.zeros_like(dens, dtype=int), [], "none"
+        return np.zeros_like(dens, dtype=int), [], "none", diag
     bg = float(np.median(vals)) if background_stat == "median" \
         else float(np.percentile(vals, 75))
     if bg <= 0:
         bg = float(np.mean(vals)) or 1.0
 
-    py, px, pv = find_local_maxima(dens, occ, sep_px)
+    py, px, pv, n_raw, n_coll = find_local_maxima(dens, occ, sep_px, deduplicate)
+    diag["n_peaks_raw"] = n_raw
+    diag["n_peaks_collapsed"] = n_coll
     keep = pv >= fold_min * bg
     py, px, pv = py[keep], px[keep], pv[keep]
+    diag["n_peaks_kept"] = int(len(pv))
     if not len(pv):
-        return np.zeros_like(dens, dtype=int), [], "none"
+        return np.zeros_like(dens, dtype=int), [], "none", diag
 
     order = np.argsort(pv)[::-1]
     py, px, pv = py[order], px[order], pv[order]
@@ -395,18 +547,36 @@ def detect_foci(dens, occ, gx, gy, fold_min, half_frac, min_area, min_cells,
         region = (part == i) & (dens >= half_frac * vv)
         if not region[yy, xx]:
             continue
-        # keep only the piece connected to the peak itself
         cl, cn = ndi.label(region)
         if cn == 0:
             continue
         region = cl == cl[yy, xx]
         if fill_holes:
             region = ndi.binary_fill_holes(region)
-        area = region.sum() * GRID_UM * GRID_UM
-        ncell = int(region[gy, gx].sum())
+
+        # only the pixels not already claimed by a brighter peak
+        assigned = region & (labels == 0)
+        contested = int(region.sum() - assigned.sum())
+        diag["n_contested_pixels"] += contested
+        if not assigned[yy, xx]:
+            continue
+        # keep the piece still connected to the peak after the contest
+        cl2, cn2 = ndi.label(assigned)
+        if cn2 == 0:
+            continue
+        assigned = cl2 == cl2[yy, xx]
+
+        area = assigned.sum() * GRID_UM * GRID_UM
+        ncell = int(assigned[gy, gx].sum())
         if area < min_area or ncell < min_cells:
             continue
-        labels[region & (labels == 0)] = next_id
+
+        # geometry of the region as actually assigned
+        dt = ndi.distance_transform_edt(assigned)
+        r_in = float(dt.max()) * GRID_UM
+        r_eq = float(np.sqrt(area / np.pi))
+
+        labels[assigned] = next_id
         recs.append({
             "focus_id": next_id,
             "peak_density": float(vv),
@@ -415,11 +585,17 @@ def detect_foci(dens, occ, gx, gy, fold_min, half_frac, min_area, min_cells,
             "boundary_density": float(half_frac * vv),
             "peak_row": int(yy), "peak_col": int(xx),
             "area_um2": float(area),
-            "equiv_radius_um": float(np.sqrt(area / np.pi)),
+            "equiv_radius_um": r_eq,
+            "max_inscribed_radius_um": r_in,
+            # 1.0 for a disc, larger for elongated or lobed shapes. The radial
+            # coordinate normalises by the inscribed radius, so this is the
+            # factor by which a microns conversion using equiv_radius overstates.
+            "shape_ratio": float(r_eq / r_in) if r_in > 0 else np.nan,
+            "n_contested_pixels": contested,
             "n_cells": ncell,
         })
         next_id += 1
-    return labels, recs, method
+    return labels, recs, method, diag
 
 
 def detect_burden(dens, occ, gx, gy, threshold, min_area, min_cells,
@@ -449,15 +625,41 @@ def detect_burden(dens, occ, gx, gy, threshold, min_area, min_cells,
     return labels, recs
 
 
-_tee = Tee(os.path.join(TAB_DIR, "00_structures_rev3_report.txt"))
+def detect_lymphoid(gx, gy, shape, occ, pheno, b_set, t_set, b_thr, t_thr,
+                    bandwidth, min_area, min_b_cells):
+    """
+    Generic lymphoid aggregate detection. t_set None means the B gate alone.
+    Returns (relabelled mask, n_kept).
+    """
+    bd = density_map(gx, gy, shape, np.isin(pheno, b_set), bandwidth, GRID_UM,
+                     occ=occ, edge_correct=EDGE_CORRECTION)
+    gate = (bd >= b_thr) & occ
+    if t_set is not None:
+        td = density_map(gx, gy, shape, np.isin(pheno, t_set), bandwidth,
+                         GRID_UM, occ=occ, edge_correct=EDGE_CORRECTION)
+        gate = gate & (td >= t_thr)
+    gate = ndi.binary_fill_holes(gate)
+    lab, n = ndi.label(gate)
+    is_b = np.isin(pheno, b_set)
+    keep = [i for i in range(1, n + 1)
+            if ((lab == i).sum() * GRID_UM * GRID_UM >= min_area
+                and int((((lab == i)[gy, gx]) & is_b).sum()) >= min_b_cells)]
+    relab = np.zeros_like(lab)
+    for new_i, old_i in enumerate(keep, start=1):
+        relab[lab == old_i] = new_i
+    return relab, len(keep)
+
+
+_tee = Tee(os.path.join(TAB_DIR, "00_structures_report.txt"))
 sys.stdout = _tee
 
-banner("AKOYA STRUCTURE DEFINITION (revision 3, dual definition)")
+banner("AKOYA STRUCTURE DEFINITION (revision 4, dual definition)")
 print(f"Run time : {datetime.now().isoformat(timespec='seconds')}")
 print(f"Output   : {OUT_DIR}")
 print(f"Detection set (IDO1-blind): {MYELOID_FOR_DETECTION}")
 print(f"Grid {GRID_UM} um, bandwidth {DENSITY_BANDWIDTH_UM} um (shared by both "
       f"definitions)")
+print(f"Edge correction: {EDGE_CORRECTION} (min weight {EDGE_MIN_WEIGHT})")
 if not HAVE_SCIPY:
     print(f"\nERROR: scipy required ({_scipy_err}).")
     sys.stdout = _tee.terminal; _tee.close(); sys.exit(1)
@@ -470,17 +672,38 @@ else:
 sub("DEFINITION 1 - absolute, for burden")
 print(f"    threshold {BURDEN_THRESHOLD:.0f} /mm^2, min area "
       f"{BURDEN_MIN_AREA_UM2:,.0f} um^2, min cells {BURDEN_MIN_CELLS}")
+print("    Hard-coded on purpose. Not swept.")
 sub("DEFINITION 2 - relative, for architecture")
 print(f"    peaks >= {FOCUS_FOLD_OVER_BACKGROUND:.0f}x section {BACKGROUND_STAT}, "
       f"boundary at {FOCUS_HALF_MAX_FRACTION:.0%} of each peak,")
 print(f"    min area {FOCUS_MIN_AREA_UM2:,.0f} um^2, min cells {FOCUS_MIN_CELLS}, "
       f"peak separation {PEAK_SEPARATION_UM:.0f} um")
+print(f"    plateau peak dedup: {DEDUPLICATE_PLATEAU_PEAKS}")
+
+sub("EXCLUDED SECTIONS")
+for sid, reason in EXCLUDE_SECTIONS.items():
+    print(f"    {sid}: {reason}")
 
 
 # %% Cell 3 - load
 # =============================================================================
 
 banner("LOADING RETAINED SECTIONS")
+
+SCAN_OF, POS_OF = {}, {}
+fs_path = os.path.join(INVENTORY_TABLE_DIR, "01_file_summary.csv")
+if os.path.exists(fs_path):
+    _inv = pd.read_csv(fs_path)
+    if SCAN_COL in _inv.columns:
+        SCAN_OF = dict(zip(_inv["sample_id"], _inv[SCAN_COL].astype(str)))
+    if POSITION_COL in _inv.columns:
+        POS_OF = {r["sample_id"]: (int(r[POSITION_COL])
+                                   if pd.notna(r[POSITION_COL]) else None)
+                  for _, r in _inv.iterrows()}
+    print(f"    inventory loaded, scan and position available for "
+          f"{len(SCAN_OF)} section(s)")
+else:
+    print(f"    WARNING: {fs_path} not found, scan and position unavailable")
 
 csv_paths = sorted(glob.glob(os.path.join(DATA_DIR, "*.csv")))
 retained = [p for p in csv_paths
@@ -503,7 +726,8 @@ if IMAGE_COL in ALL_COLS:
 dtype_map = ({c: "float32" for c in present_extra + [XCOL, YCOL]}
              if USE_FLOAT32 else None)
 
-cells, geom, dens_of = {}, {}, {}
+cells, geom, dens_of, dens_raw_of = {}, {}, {}, {}
+edge_rows = []
 for path in retained:
     sid = os.path.splitext(os.path.basename(path))[0]
     cond = GROUP_MAP.get(sid.split("_")[0], "UNKNOWN")
@@ -531,14 +755,42 @@ for path in retained:
     x0, y0, gx, gy, shape = make_grid(x, y, GRID_UM)
     occ = tissue_mask(gx, gy, shape)
     mye = d["pheno"].isin(MYELOID_FOR_DETECTION).to_numpy()
-    dens = density_map(gx, gy, shape, mye, DENSITY_BANDWIDTH_UM, GRID_UM)
+
+    dens = density_map(gx, gy, shape, mye, DENSITY_BANDWIDTH_UM, GRID_UM,
+                       occ=occ, edge_correct=EDGE_CORRECTION)
+    dens_raw = (density_map(gx, gy, shape, mye, DENSITY_BANDWIDTH_UM, GRID_UM,
+                            occ=occ, edge_correct=False)
+                if REPORT_EDGE_COMPARISON else None)
+
     geom[sid] = {"x0": x0, "y0": y0, "gx": gx, "gy": gy, "shape": shape,
-                 "occ": occ,
+                 "occ": occ, "scan": SCAN_OF.get(sid, "na"),
+                 "position": POS_OF.get(sid),
                  "tissue_area_um2": float(occ.sum() * GRID_UM * GRID_UM),
                  "bg_median": float(np.median(dens[occ])),
                  "bg_p75": float(np.percentile(dens[occ], 75)),
                  "peak": float(dens[occ].max())}
     dens_of[sid] = dens
+    if dens_raw is not None:
+        dens_raw_of[sid] = dens_raw
+        # how much of the tissue is within one bandwidth of a boundary?
+        w = ndi.gaussian_filter(occ.astype(float),
+                                sigma=DENSITY_BANDWIDTH_UM / GRID_UM,
+                                mode="constant")
+        edge_rows.append({
+            "sample_id": sid, "condition": cond,
+            "tissue_area_mm2": geom[sid]["tissue_area_um2"] / 1e6,
+            "pct_tissue_edge_affected": 100.0 * float((w[occ] < 0.95).mean()),
+            "median_edge_weight": float(np.median(w[occ])),
+            "bg_median_corrected": geom[sid]["bg_median"],
+            "bg_median_uncorrected": float(np.median(dens_raw[occ])),
+            "peak_corrected": geom[sid]["peak"],
+            "peak_uncorrected": float(dens_raw[occ].max()),
+            "pct_above_burden_corrected":
+                100.0 * float((dens[occ] >= BURDEN_THRESHOLD).mean()),
+            "pct_above_burden_uncorrected":
+                100.0 * float((dens_raw[occ] >= BURDEN_THRESHOLD).mean()),
+        })
+
     print(f"    {sid:<12} {cond:<10} {len(d):>9,} cells   "
           f"tissue={geom[sid]['tissue_area_um2']/1e6:5.1f} mm^2   "
           f"bg={geom[sid]['bg_median']:>6.0f}   peak={geom[sid]['peak']:>7.0f}   "
@@ -560,6 +812,25 @@ for s in SAMPLE_ORDER:
     _seen[c] = _seen.get(c, 0) + 1
 
 SEP_PX = max(1, int(round(PEAK_SEPARATION_UM / GRID_UM)))
+
+# ---- edge correction report -------------------------------------------------
+if edge_rows:
+    edge = pd.DataFrame(edge_rows)
+    sub("Edge correction: what it changed")
+    print("    Without correction, density within one bandwidth of a tissue")
+    print("    boundary is damped by the fraction of the kernel falling on")
+    print("    empty space. This is how much tissue that touches and what it")
+    print("    did to the numbers detection depends on.\n")
+    print(f"    {'section':<12}{'edge %':>9}{'bg raw':>9}{'bg corr':>9}"
+          f"{'peak raw':>10}{'peak corr':>11}{'>thr raw':>10}{'>thr corr':>11}")
+    print("    " + "-" * 81)
+    for _, r in edge.iterrows():
+        print(f"    {r['sample_id']:<12}{r['pct_tissue_edge_affected']:>8.1f}%"
+              f"{r['bg_median_uncorrected']:>9.0f}{r['bg_median_corrected']:>9.0f}"
+              f"{r['peak_uncorrected']:>10.0f}{r['peak_corrected']:>11.0f}"
+              f"{r['pct_above_burden_uncorrected']:>9.2f}%"
+              f"{r['pct_above_burden_corrected']:>10.2f}%")
+    write_csv(edge, "32_density_edge_correction.csv")
 
 
 # %% Cell 4 - DEFINITION 1: absolute burden
@@ -588,7 +859,7 @@ for s in SAMPLE_ORDER:
     pct_above = 100.0 * float((dens[g["occ"]] >= BURDEN_THRESHOLD).mean())
     print(f"    {s:<12} {COND_OF[s]:<10} regions={len(recs):>3}  "
           f"burden={pct_tissue:>5.1f}%  "
-          f"(tissue above threshold before filters: {pct_above:>5.1f}%)")
+          f"(tissue above threshold before filters: {pct_above:>5.2f}%)")
 
 burden = pd.DataFrame(burden_rows)
 if len(burden):
@@ -596,6 +867,7 @@ if len(burden):
 
 burden_summary = pd.DataFrame([{
     "sample_id": s, "animal_id": short_label(s), "condition": COND_OF[s],
+    "scan_id": geom[s]["scan"], "slide_position_rank": geom[s]["position"],
     "tissue_area_mm2": geom[s]["tissue_area_um2"] / 1e6,
     "n_regions": int((burden["sample_id"] == s).sum()) if len(burden) else 0,
     "burden_pct": (float(burden.loc[burden["sample_id"] == s,
@@ -626,11 +898,12 @@ else:
         exp = EXPERT_COUNTS.get(s, np.nan)
         for fold in SWEEP_FOLDS:
             for hf in SWEEP_HALF_FRACTIONS:
-                lab, recs, _ = detect_foci(
+                lab, recs, _, _ = detect_foci(
                     dens, g["occ"], g["gx"], g["gy"], fold, hf,
                     min_area=min(SWEEP_MIN_AREAS_UM2), min_cells=FOCUS_MIN_CELLS,
                     sep_px=SEP_PX, fill_holes=FOCUS_FILL_HOLES,
-                    background_stat=BACKGROUND_STAT)
+                    background_stat=BACKGROUND_STAT,
+                    deduplicate=DEDUPLICATE_PLATEAU_PEAKS)
                 rc = pd.DataFrame(recs)
                 for ma in SWEEP_MIN_AREAS_UM2:
                     k = rc.loc[rc["area_um2"] >= ma] if len(rc) else rc
@@ -652,8 +925,9 @@ else:
     cal = (foci_sweep.groupby(["fold_over_background", "half_max_fraction",
                                "min_area_um2", "condition"])["abs_error"]
            .sum().unstack("condition").reset_index())
-    cal["total_error"] = cal[CONDITION_ORDER].sum(axis=1)
-    cal = cal.sort_values(["total_error", "D1MT"])
+    have_conds = [c for c in CONDITION_ORDER if c in cal.columns]
+    cal["total_error"] = cal[have_conds].sum(axis=1)
+    cal = cal.sort_values(["total_error"] + have_conds[:1])
     sub("Best 15 combinations by total absolute error")
     print(f"      {'fold':>7}{'half':>7}{'min_area':>11}{'err D1MT':>11}"
           f"{'err Untr':>11}{'total':>8}")
@@ -670,9 +944,13 @@ else:
                         (foci_sweep["min_area_um2"] == b["min_area_um2"])]
     print(bs[["sample_id", "condition", "n_foci", "expert_count",
               "median_radius_um", "pct_tissue_area"]].to_string(index=False))
-    print("\n    Reminder: the untreated targets came from the revision-1")
-    print("    algorithm, so a combination scoring zero error there may simply")
-    print("    be reproducing revision 1. The independent check is F35.")
+    print("\n    CIRCULARITY REMINDER: the untreated targets in EXPERT_COUNTS")
+    print("    came from the revision-1 algorithm, not from a pathologist, so a")
+    print("    combination scoring zero error in that arm may simply be")
+    print("    reproducing revision 1. Only the three treated counts are expert.")
+    print("    The independent check is F35.")
+    for k, v in EXPERT_SOURCE.items():
+        print(f"      {k:<12} {EXPERT_COUNTS.get(k, 'na'):>3}  ({v})")
 
     # ---- F32 sweep heatmaps -------------------------------------------------
     n_ma = len(SWEEP_MIN_AREAS_UM2)
@@ -710,8 +988,9 @@ else:
             ax.set_title(f"{cond}, min area {int(ma):,} µm²\ntarget {target}",
                          fontsize=FONT_SIZE_TITLE - 14)
     fig.suptitle("Relative foci sweep: total foci across sections in each arm\n"
-                 "Red bold = within 1 of the expert target", y=1.02,
-                 fontsize=FONT_SIZE_TITLE - 4)
+                 "Red bold = within 1 of the target "
+                 "(untreated targets are algorithmic, not expert)", y=1.02,
+                 fontsize=FONT_SIZE_TITLE - 6)
     save_fig(fig, "F32_foci_parameter_sweep")
 
 
@@ -720,8 +999,9 @@ else:
 
 banner("FINAL DETECTION AND CELL ASSIGNMENT")
 
-foci_rows, balt_rows, masks = [], [], {}
+foci_rows, balt_rows, balt_alt_rows, masks = [], [], [], {}
 method_used = "none"
+diag_rows = []
 
 for s in SAMPLE_ORDER:
     d = cells[s]
@@ -730,13 +1010,16 @@ for s in SAMPLE_ORDER:
     x0, y0 = g["x0"], g["y0"]
     pheno = d["pheno"].to_numpy()
 
-    labels, recs, method = detect_foci(
+    labels, recs, method, diag = detect_foci(
         dens, occ, gx, gy, FOCUS_FOLD_OVER_BACKGROUND, FOCUS_HALF_MAX_FRACTION,
         FOCUS_MIN_AREA_UM2, FOCUS_MIN_CELLS, SEP_PX,
-        fill_holes=FOCUS_FILL_HOLES, background_stat=BACKGROUND_STAT)
+        fill_holes=FOCUS_FILL_HOLES, background_stat=BACKGROUND_STAT,
+        deduplicate=DEDUPLICATE_PLATEAU_PEAKS)
     if method != "none":
         method_used = method
     n_foci = len(recs)
+    diag.update({"sample_id": s, "condition": COND_OF[s], "n_foci": n_foci})
+    diag_rows.append(diag)
 
     core_mask = labels > 0
     dil_px = int(np.ceil(CUFF_WIDTH_UM / GRID_UM))
@@ -760,19 +1043,11 @@ for s in SAMPLE_ORDER:
     if core_mask.any():
         radial[cuff_mask] = 1.0 + np.clip(dout[cuff_mask] / CUFF_WIDTH_UM, 0, 1)
 
-    # ---- BALT --------------------------------------------------------------
-    bd = density_map(gx, gy, shape, pheno == BALT_B, BALT_BANDWIDTH_UM, GRID_UM)
-    td = density_map(gx, gy, shape, pheno == BALT_T, BALT_BANDWIDTH_UM, GRID_UM)
-    balt = ndi.binary_fill_holes((bd >= BALT_B_THRESHOLD) &
-                                 (td >= BALT_T_THRESHOLD) & occ)
-    blab, nblab = ndi.label(balt)
-    bkeep = [i for i in range(1, nblab + 1)
-             if ((blab == i).sum() * GRID_UM * GRID_UM >= BALT_MIN_AREA_UM2
-                 and int((((blab == i)[gy, gx]) & (pheno == BALT_B)).sum()) >= BALT_MIN_B_CELLS)]
-    brelab = np.zeros_like(blab)
-    for new_i, old_i in enumerate(bkeep, start=1):
-        brelab[blab == old_i] = new_i
-    n_balt = len(bkeep)
+    # ---- BALT, primary definition ------------------------------------------
+    brelab, n_balt = detect_lymphoid(
+        gx, gy, shape, occ, pheno, [BALT_B], [BALT_T],
+        BALT_B_THRESHOLD, BALT_T_THRESHOLD, BALT_BANDWIDTH_UM,
+        BALT_MIN_AREA_UM2, BALT_MIN_B_CELLS)
 
     masks[s] = {"x0": x0, "y0": y0, "shape": shape, "core": labels,
                 "cuff": cuff_mask, "balt": brelab, "occ": occ, "dens": dens,
@@ -783,6 +1058,8 @@ for s in SAMPLE_ORDER:
     cell_cuff = np.where(cuff_mask[gy, gx], cuff_owner[gy, gx], 0)
     out = d.copy()
     out["sample_id"] = s
+    out["scan_id"] = g["scan"]
+    out["slide_position_rank"] = g["position"]
     out["focus_id"] = np.where(cell_core > 0, cell_core, cell_cuff)
     out["region"] = np.where(cell_core > 0, "core",
                              np.where(cell_cuff > 0, "cuff", "interstitium"))
@@ -801,22 +1078,25 @@ for s in SAMPLE_ORDER:
         i = r["focus_id"]
         sel_core = cell_core == i
         sel_cuff = cell_cuff == i
-        sub_core = out.loc[sel_core]
-        sub_all = out.loc[sel_core | sel_cuff]
-        mac = sub_core.loc[sub_core["pheno"].isin(CD68_LINEAGE)]
+        core_cells = out.loc[sel_core]
+        all_cells = out.loc[sel_core | sel_cuff]
+        mac = core_cells.loc[core_cells["pheno"].isin(CD68_LINEAGE)]
         ys, xs = np.nonzero(labels == i)
         rec = dict(r)
         rec.update({
-            "sample_id": s, "condition": COND_OF[s],
+            "sample_id": s, "condition": COND_OF[s], "scan_id": g["scan"],
             "centroid_x_um": float(x0 + (xs.mean() - 1) * GRID_UM),
             "centroid_y_um": float(y0 + (ys.mean() - 1) * GRID_UM),
             "pct_of_tissue_area": 100.0 * r["area_um2"] / g["tissue_area_um2"],
             "n_cells_core": int(sel_core.sum()),
             "n_cells_cuff": int(sel_cuff.sum()),
+            # consistency guard: n_cells comes from the label array, n_cells_core
+            # from the per-cell assignment. They must agree.
+            "geometry_matches_assignment": bool(int(sel_core.sum()) == r["n_cells"]),
             "n_macrophages_core": int(len(mac)),
-            "n_ido1_pos_core": int((sub_core["pheno"] == IDO1_POS_PHENO).sum()),
+            "n_ido1_pos_core": int((core_cells["pheno"] == IDO1_POS_PHENO).sum()),
             "pct_ido1_pos_of_mac_core": (
-                100.0 * float((sub_core["pheno"] == IDO1_POS_PHENO).sum()) / len(mac)
+                100.0 * float((core_cells["pheno"] == IDO1_POS_PHENO).sum()) / len(mac)
                 if len(mac) else np.nan),
             "median_ido1_macrophages": float(mac["IDO1"].median()) if len(mac) else np.nan,
             "median_hk3_macrophages": float(mac["3-Hydroxykynurenine"].median())
@@ -824,16 +1104,16 @@ for s in SAMPLE_ORDER:
             "median_inos_macrophages": float(mac["iNOS"].median()) if len(mac) else np.nan,
             "median_arg1_macrophages": float(mac["Arginase-1"].median())
             if len(mac) else np.nan,
-            "median_ifng_core": float(sub_core["IFNG"].median()) if len(sub_core) else np.nan,
-            "overlaps_burden_region": bool((sub_core["in_burden_region"]).any()),
-            "pct_core_in_burden_region": 100.0 * float(sub_core["in_burden_region"].mean())
-            if len(sub_core) else np.nan,
+            "median_ifng_core": float(core_cells["IFNG"].median()) if len(core_cells) else np.nan,
+            "overlaps_burden_region": bool((core_cells["in_burden_region"]).any()),
+            "pct_core_in_burden_region": 100.0 * float(core_cells["in_burden_region"].mean())
+            if len(core_cells) else np.nan,
         })
         for ph in PHENOTYPE_ORDER:
-            n_ph = int((sub_all["pheno"] == ph).sum())
+            n_ph = int((all_cells["pheno"] == ph).sum())
             rec[f"n_{ascii_safe(ph)}"] = n_ph
-            rec[f"pct_{ascii_safe(ph)}"] = (100.0 * n_ph / len(sub_all)
-                                            if len(sub_all) else np.nan)
+            rec[f"pct_{ascii_safe(ph)}"] = (100.0 * n_ph / len(all_cells)
+                                            if len(all_cells) else np.nan)
         foci_rows.append(rec)
 
     # ---- BALT metrics ------------------------------------------------------
@@ -848,15 +1128,18 @@ for s in SAMPLE_ORDER:
         cd21_in = float(b_in.median()) if len(b_in) else np.nan
         ratio = (cd21_in / cd21_bg) if (np.isfinite(cd21_bg) and cd21_bg > 0) else np.nan
         balt_rows.append({
-            "sample_id": s, "condition": COND_OF[s], "balt_id": i,
+            "sample_id": s, "condition": COND_OF[s], "scan_id": g["scan"],
+            "balt_id": i,
             "centroid_x_um": float(x0 + (xs.mean() - 1) * GRID_UM),
             "centroid_y_um": float(y0 + (ys.mean() - 1) * GRID_UM),
             "area_um2": float(area), "n_cells": int(sel.sum()),
             "n_b_cells": int((s_all["pheno"] == BALT_B).sum()),
             "n_helper_t": int((s_all["pheno"] == BALT_T).sum()),
+            "n_t_lineage": int(s_all["pheno"].isin(T_LINEAGE).sum()),
             "n_plasma": int((s_all["pheno"] == PLASMA).sum()),
             "pct_b_cells": 100.0 * float((s_all["pheno"] == BALT_B).mean()) if len(s_all) else np.nan,
             "pct_helper_t": 100.0 * float((s_all["pheno"] == BALT_T).mean()) if len(s_all) else np.nan,
+            "pct_t_lineage": 100.0 * float(s_all["pheno"].isin(T_LINEAGE).mean()) if len(s_all) else np.nan,
             "pct_plasma": 100.0 * float((s_all["pheno"] == PLASMA).mean()) if len(s_all) else np.nan,
             "median_cd21_b_cells": cd21_in,
             "median_cd21_b_cells_outside": cd21_bg,
@@ -864,16 +1147,61 @@ for s in SAMPLE_ORDER:
             "is_follicle": bool(np.isfinite(ratio) and ratio >= CD21_FOLLICLE_RATIO),
             "min_dist_to_focus_um": float(s_all["dist_to_focus_um"].min())
             if len(s_all) else np.nan,
+            # a candidate sitting on a granuloma's lymphocyte cuff is a
+            # different object from a free-standing follicle in uninvolved
+            # parenchyma. Q7 needs to tell them apart.
+            "pct_in_focus_core": 100.0 * float((s_all["region"] == "core").mean())
+            if len(s_all) else np.nan,
+            "pct_in_focus_cuff": 100.0 * float((s_all["region"] == "cuff").mean())
+            if len(s_all) else np.nan,
+            "pct_in_burden_region": 100.0 * float(s_all["in_burden_region"].mean())
+            if len(s_all) else np.nan,
         })
+
+    # ---- BALT alternative gates, diagnostic only ---------------------------
+    if RUN_BALT_ALTERNATIVES:
+        for name, b_set, t_set, b_thr, t_thr in BALT_ALT_GATES:
+            alt, n_alt = detect_lymphoid(
+                gx, gy, shape, occ, pheno, b_set, t_set, b_thr, t_thr,
+                BALT_BANDWIDTH_UM, BALT_MIN_AREA_UM2, BALT_MIN_B_CELLS)
+            n_foll = 0
+            for i in range(1, n_alt + 1):
+                m_alt = alt[gy, gx] == i
+                b_in = out.loc[m_alt & (out["pheno"] == BALT_B).to_numpy(), "CD21"]
+                if len(b_in) and np.isfinite(cd21_bg) and cd21_bg > 0:
+                    if float(b_in.median()) / cd21_bg >= CD21_FOLLICLE_RATIO:
+                        n_foll += 1
+            balt_alt_rows.append({
+                "sample_id": s, "condition": COND_OF[s], "gate": name,
+                "n_candidates": n_alt, "n_cd21_follicles": n_foll,
+                "area_mm2": float((alt > 0).sum() * GRID_UM * GRID_UM / 1e6),
+            })
 
     exp = EXPERT_COUNTS.get(s, np.nan)
     flag = f"   <-- expert {int(exp)}" if np.isfinite(exp) and n_foci != exp else ""
     print(f"    {s:<12} foci={n_foci:>3}  BALT={n_balt:>3}  "
-          f"bg={g['bg_median']:>6.0f}{flag}")
+          f"bg={g['bg_median']:>6.0f}   peaks {diag['n_peaks_raw']}->"
+          f"{diag['n_peaks_raw'] - diag['n_peaks_collapsed']} after dedup, "
+          f"{diag['n_peaks_kept']} above fold, {diag['n_contested_pixels']} "
+          f"contested px{flag}")
 
 foci = pd.DataFrame(foci_rows)
 balts = pd.DataFrame(balt_rows)
+balt_alt = pd.DataFrame(balt_alt_rows)
+diagnostics = pd.DataFrame(diag_rows)
 print(f"\n    Partition method used: {method_used}")
+write_csv(diagnostics, "35b_detection_diagnostics.csv")
+
+if len(foci):
+    bad = foci.loc[~foci["geometry_matches_assignment"]]
+    if len(bad):
+        print(f"\n    WARNING: {len(bad)} focus record(s) where the label-array "
+              f"cell count disagrees with the per-cell assignment. Investigate "
+              f"before using table 35 geometry.")
+        print(bad[["sample_id", "focus_id", "n_cells", "n_cells_core"]].to_string(index=False))
+    else:
+        print("    Geometry check: every focus record matches its per-cell "
+              "assignment.")
 
 sub("Foci per section, with the scale they operate at")
 for s in SAMPLE_ORDER:
@@ -884,6 +1212,8 @@ for s in SAMPLE_ORDER:
         print(f"    {s:<12} {COND_OF[s]:<10} foci={len(f):>3} "
               f"(expert {EXPERT_COUNTS.get(s, 'na')})  "
               f"median radius={f['equiv_radius_um'].median():>5.0f} um  "
+              f"inscribed={f['max_inscribed_radius_um'].median():>5.0f} um  "
+              f"shape={f['shape_ratio'].median():>4.2f}  "
               f"peak={f['peak_density'].median():>7.0f}  "
               f"fold={f['fold_over_background'].median():>5.1f}x  "
               f"BALT={len(b):>3} ({nf} CD21+)")
@@ -896,6 +1226,28 @@ if len(foci):
     write_csv(foci, "35_foci_structures_relative.csv")
 if len(balts):
     write_csv(balts, "36_balt_structures.csv")
+if len(balt_alt):
+    write_csv(balt_alt, "36b_balt_alternative_gates.csv")
+    sub("BALT gate sensitivity (diagnostic, does not change balt_id)")
+    print("    Helper T cells are a CD4 call and CD4-positive runs at 4 to 15")
+    print("    percent of T cells on scan_01. If candidate counts hold across")
+    print("    all three gates the arm comparison is safe. If they do not, the")
+    print("    primary gate is partly reading CD4 staining rather than lymphoid")
+    print("    organisation.\n")
+    piv = balt_alt.pivot_table(index="sample_id", columns="gate",
+                               values="n_candidates")
+    pivf = balt_alt.pivot_table(index="sample_id", columns="gate",
+                                values="n_cd21_follicles")
+    gates = [g[0] for g in BALT_ALT_GATES if g[0] in piv.columns]
+    print(f"    {'section':<14}" + "".join(f"{g[:22]:>24}" for g in gates))
+    print("    " + "-" * (14 + 24 * len(gates)))
+    for s in SAMPLE_ORDER:
+        if s not in piv.index:
+            continue
+        row = f"    {s:<14}"
+        for g in gates:
+            row += f"{int(piv.loc[s, g]):>13} ({int(pivf.loc[s, g])} CD21+)"[:24].rjust(24)
+        print(row)
 
 sub("SCALE WARNING - carry this into every downstream comparison")
 if len(foci):
@@ -905,12 +1257,17 @@ if len(foci):
             continue
         print(f"    {c:<12} n={len(f):>3}  peak density median "
               f"{f['peak_density'].median():>8.0f}  "
-              f"radius median {f['equiv_radius_um'].median():>5.0f} um  "
-              f"fold over background {f['fold_over_background'].median():>5.1f}x")
+              f"equiv radius {f['equiv_radius_um'].median():>5.0f} um  "
+              f"inscribed radius {f['max_inscribed_radius_um'].median():>5.0f} um  "
+              f"fold {f['fold_over_background'].median():>5.1f}x")
     print("\n    Treated foci are defined relative to treated background. They are")
     print("    residual myeloid foci, NOT granulomas equivalent to the untreated")
     print("    lesions. Report peak density and fold alongside any architecture")
     print("    comparison so the two are never conflated.")
+    print("\n    USE max_inscribed_radius_um, NOT equiv_radius_um, to convert a")
+    print("    radial-unit effect into microns. The radial coordinate is")
+    print("    normalised by the inscribed radius. shape_ratio is the factor by")
+    print("    which the equivalent radius would overstate it.")
 
 
 # %% Cell 7 - figures
@@ -1107,28 +1464,29 @@ if len(foci):
     ax.set_title("Relative prominence", fontsize=FONT_SIZE_TITLE - 12)
     style_axes(ax)
 
+    # shape, which is what the radial coordinate is normalised by
     ax = axes[2]
-    for s in SAMPLE_ORDER:
-        f = foci.loc[foci["sample_id"] == s]
+    for i, c in enumerate(CONDITION_ORDER):
+        f = foci.loc[foci["condition"] == c]
         if not len(f):
             continue
-        ax.scatter(f["equiv_radius_um"], f["peak_density"], s=320,
-                   color=COLOR_OF[s], marker=MARKER_OF[s], edgecolor="#FFFFFF",
-                   linewidth=2, zorder=3)
-    ax.set_xscale("log"); ax.set_yscale("log")
-    ax.set_xlabel("Equivalent radius (µm)")
-    ax.set_ylabel("Peak myeloid density (cells / mm$^2$)")
-    ax.set_title("Size against intensity", fontsize=FONT_SIZE_TITLE - 12)
+        j = rng.uniform(-0.14, 0.14, size=len(f))
+        ax.scatter(np.full(len(f), i) + j, f["shape_ratio"], s=320,
+                   color=CONDITION_COLORS[c], edgecolor="#FFFFFF", linewidth=2,
+                   zorder=3)
+        ax.hlines(f["shape_ratio"].median(), i - 0.3, i + 0.3, color="#000000",
+                  linewidth=4)
+    ax.axhline(1.0, color="#000000", linestyle="--", linewidth=2.5)
+    ax.set_xticks(range(len(CONDITION_ORDER)))
+    ax.set_xticklabels(CONDITION_ORDER)
+    ax.set_ylabel("Equivalent radius / inscribed radius")
+    ax.set_title("Shape (1.0 = disc)", fontsize=FONT_SIZE_TITLE - 12)
     style_axes(ax)
-    ax.legend(handles=[Line2D([0], [0], color=COLOR_OF[s], marker=MARKER_OF[s],
-                              markersize=16, linestyle="none",
-                              label=f"{short_label(s)} ({COND_OF[s]})")
-                       for s in SAMPLE_ORDER],
-              frameon=False, fontsize=FONT_SIZE_LEGEND - 14, loc="best")
     fig.suptitle("Treated foci are prominent within their own tissue but operate "
-                 "at a lower absolute scale\nThis figure is why the two "
-                 "definitions must not be conflated", y=1.04,
-                 fontsize=FONT_SIZE_TITLE - 6)
+                 "at a lower absolute scale\nRight panel: the radial coordinate "
+                 "normalises by the inscribed radius, so shape spread is noise "
+                 "in the radial outcome", y=1.05,
+                 fontsize=FONT_SIZE_TITLE - 8)
     save_fig(fig, "F34_focus_scale_comparison")
 
 
@@ -1203,7 +1561,7 @@ spatial_grid("F36_balt_candidates",
 
 # ---- F37 BALT classification ------------------------------------------------
 if len(balts):
-    fig, axes = plt.subplots(1, 2, figsize=(30, 13))
+    fig, axes = plt.subplots(1, 3, figsize=(45, 13))
     ax = axes[0]
     for s in SAMPLE_ORDER:
         b = balts.loc[balts["sample_id"] == s]
@@ -1234,7 +1592,23 @@ if len(balts):
     ax.set_title("Proximity to foci and plasma content",
                  fontsize=FONT_SIZE_TITLE - 14)
     style_axes(ax)
-    fig.suptitle("BALT candidate characterization", y=1.03,
+
+    # is the candidate free-standing, or sitting on a granuloma?
+    ax = axes[2]
+    for s in SAMPLE_ORDER:
+        b = balts.loc[balts["sample_id"] == s]
+        if len(b):
+            ax.scatter(b["pct_in_focus_core"] + b["pct_in_focus_cuff"],
+                       b["cd21_ratio"], s=340, color=COLOR_OF[s],
+                       marker=MARKER_OF[s], edgecolor="#FFFFFF", linewidth=2,
+                       zorder=3)
+    ax.axhline(CD21_FOLLICLE_RATIO, color="#000000", linestyle="--", linewidth=3.5)
+    ax.set_xlabel("% of candidate inside a focus core or cuff")
+    ax.set_ylabel("CD21 ratio")
+    ax.set_title("Free-standing or granuloma-associated?",
+                 fontsize=FONT_SIZE_TITLE - 16)
+    style_axes(ax)
+    fig.suptitle("BALT candidate characterization", y=1.04,
                  fontsize=FONT_SIZE_TITLE - 4)
     save_fig(fig, "F37_balt_classification")
 
@@ -1244,6 +1618,7 @@ if len(balts):
 
 banner("SUMMARY")
 print(f"Partition method     : {method_used}")
+print(f"Edge correction      : {EDGE_CORRECTION}")
 print(f"Burden regions (abs) : {len(burden)}")
 print(f"Foci (relative)      : {len(foci)}")
 print(f"BALT candidates      : {len(balts)}"
@@ -1255,21 +1630,24 @@ for c in CONDITION_ORDER:
           f"{len(fsel):>3} foci")
 
 sub("Read in this order")
-print("  1. F31 right panel : background-to-peak range per section, with the")
+print("  1. table 32        : what the edge correction changed. Read this")
+print("     first, because every number below moved with it.")
+print("  2. F31 right panel : background-to-peak range per section, with the")
 print("     absolute threshold drawn. This is the whole argument for two")
 print("     definitions in one picture.")
-print("  2. F30 / table 33b : burden under the absolute definition.")
-print("  3. F32 / table 34b : foci sweep against expert counts.")
-print("  4. F33             : do the relative boundaries match the slides?")
-print("  5. F34             : the scale figure. Treated foci are prominent")
-print("     within their own tissue but operate at a lower absolute scale.")
-print("  6. F35             : IDO1+ capture, the independent validation.")
+print("  3. F30 / table 33b : burden under the absolute definition.")
+print("  4. F32 / table 34b : foci sweep. Remember the untreated targets are")
+print("     algorithmic, not expert.")
+print("  5. F33             : do the relative boundaries match the slides?")
+print("  6. F34             : the scale figure, now with the shape panel.")
+print("  7. F35             : IDO1+ capture, the independent validation.")
+print("  8. table 36b       : BALT gate sensitivity, for the Q7 session.")
 
-sub("Then script 05")
-print("  Radial composition profiles within foci: phenotype fractions as a")
-print("  function of radial_pos, per focus, per animal. Scale-free, so treated")
-print("  and untreated foci can be compared on architecture even though they")
-print("  differ several fold in absolute density.")
+sub("Downstream must be rerun")
+print("  Every script from 05 onward reads cell_assignments/ or table 35.")
+print("  The edge correction moves focus boundaries, which moves radial_pos,")
+print("  which moves the Finding 3 coefficient. Treat every number carried in")
+print("  the project notes as provisional until 06, 07, 08 and 09 have rerun.")
 
 banner("DONE")
 sys.stdout = _tee.terminal

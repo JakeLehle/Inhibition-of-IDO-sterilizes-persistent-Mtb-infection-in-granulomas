@@ -4,18 +4,19 @@
 AKOYA Phenocycler - SPATIAL LAYOUT AND BATCH DIAGNOSTICS
 Rhesus Mtb + SIV, D1MT-treated (G3) vs untreated (G4), necropsy lung sections
 
-Script 02 of the AKOYA analysis series.
+Script 02 of the AKOYA analysis series. REVISION 2.
 
 PURPOSE
     Answer the structural questions raised by the script 01 inventory, before any
     gating, normalization or spatial statistics are committed to.
 
     Q1  Do the four sections per scan tile cleanly in a shared coordinate space?
-    Q2  How much of the marker intensity spread is between slide versus between
-        section within a slide? (Slide is perfectly confounded with condition, so
-        this bounds the risk rather than resolving it.)
-    Q3  Are 43102 and 43112 (bottom section of each scan) globally low across many
-        markers, which would indicate a slide position artifact rather than biology?
+    Q2  How much of the marker intensity spread is between scan versus between
+        section within a scan? Scan is perfectly confounded with arm here, so
+        this bounds the risk rather than resolving it.
+    Q3  Are 43102 and 43112 (position 1 on each scan) globally low across many
+        markers, which would indicate a slide position artifact rather than
+        biology?
     Q4  What does the IDO1 intensity distribution on CD68+ macrophages actually
         look like per section? Is there a distinct IDO1-high mode, and does it
         vanish in the treated arm or just shift?
@@ -26,13 +27,72 @@ PURPOSE
     Still diagnostic only. Nothing is re-phenotyped, gated, normalized or written
     back to the source CSVs.
 
+WHAT CHANGED IN REVISION 2 (and why)
+
+    1. Q2 IS KEYED ON scan_id, NOT ON treatment.
+       The previous version built its slide key as
+       dict(zip(fs["sample_id"], fs["treatment"])). Because each scan carries
+       exactly one arm, that produced the right grouping by accident, but it
+       meant the reported quantity could never be described accurately. Script
+       01 revision 2 writes a real scan_id and this script now reads it.
+
+    2. Q2 REPORTS A CORRECTED VARIANCE COMPONENT, NOT ONLY THE NAIVE RATIO.
+       frac_between_slide was between / (between + within), where "between" was
+       the raw variance of the two scan means. The variance of group means
+       already contains within-group variance divided by n, so that ratio is
+       biased upward. The corrected between-scan component is (MSB - MSW) / n
+       and the corresponding ICC is now reported alongside. The naive column is
+       retained under its old name so earlier numbers can be traced.
+
+    3. THE NAME IS HONEST NOW.
+       Scan and arm are the same factor in this cohort. A high between-scan
+       fraction is consistent with a staining batch difference AND with a real
+       biological difference between a granuloma-rich lung and a treated lung,
+       and nothing in this table can separate them. CD3e, CD163, CD4 and IFNG
+       are exactly the markers you would expect to differ biologically, so
+       reading their high fractions as "batch" would be wrong. Every printed
+       line and the figure title now say this.
+
+    4. Q3 GAINS A COMPOSITION-CONTROLLED VERSION AND A RANK STATISTIC.
+       The old dimness test z-scored each marker's SECTION-WIDE median across
+       the four sections of a scan. Section-wide medians depend on which cells
+       are in the section, and composition varies enormously here: 43102 is 89
+       percent endothelial, epithelial and Other, while 43109 is 36 percent
+       Other and 11 percent neutrophils. A section can therefore look dim
+       because of what is in it rather than how it stained.
+
+       The test is now run two ways. The original all-cell version is kept for
+       continuity. A composition-controlled version z-scores the median of each
+       marker WITHIN each phenotype, using only phenotypes that clear a cell
+       count in every section of that scan, so every comparison is like for
+       like.
+
+       A rank statistic is added to both. For each marker (and phenotype), the
+       four sections of a scan are ranked and the fraction of comparisons where
+       a section is the dimmest of its four is reported. Under no position
+       effect that fraction is 0.25 with no distributional assumptions. This
+       matters because with four sections per scan the minimum possible z is
+       -1.5, so a median z of -1.04 is closer to the floor than it looks and
+       needs a reference point.
+
+    5. PALETTES AND THE SCAN BOUNDARY ARE DEFINED ONCE.
+       cmap was created in the Q3 cell and reused by the Q5 figure, which raised
+       NameError when cells were run out of order in Spyder. The condition-based
+       n_first boundary is replaced by a scan-derived boundary, same fix as 01b.
+
+    6. SMALL FIXES.
+       vmax = float(...) or 1.0 returns NaN when the input is all NaN, because
+       NaN is truthy. Replaced with an explicit check in all three places.
+       Section geometry now carries scan_id and slide_position_rank from script
+       01 rather than recomputing the rank here.
+
 OUTPUTS
     figures/  F10 .. F16   (PDF + PNG, 300 DPI)
     tables/   10 .. 15     (CSV, LF line endings)
 
 USAGE
     conda activate sc_pre
-    python AKOYA_02_Spatial_Diagnostics.py
+    python AKOYA_02_Spatial_Diagnostic.py
 
     Or via SLURM (single job, no arrays):
     #SBATCH --partition=normal
@@ -55,9 +115,11 @@ OUT_DIR = "/master/jlehle/WORKING/AKOYA/diagnostics"
 CONDITION_ORDER = ["D1MT", "Untreated"]
 CONDITION_COLORS = {"D1MT": "#2C7FB8", "Untreated": "#D95F02"}
 
-# Scan / slide identity is parsed from the Image column. Group prefix fallback
-# is used if the Image column is missing.
+# Scan / slide identity comes from script 01 revision 2. The Image column is
+# used as a fallback if those columns are absent.
 GROUP_MAP = {"G3": "D1MT", "G4": "Untreated"}
+SCAN_COL = "scan_id"
+POSITION_COL = "slide_position_rank"
 
 # ---- column names -----------------------------------------------------------
 INTENSITY_SUFFIX = ": Mean"
@@ -111,6 +173,12 @@ MIN_CELLS_FOR_NN = 50          # per animal, for both anchor and target
 # ---- position artifact test -------------------------------------------------
 N_Y_BINS_WITHIN_SECTION = 10   # within-section Y deciles
 MIN_CELLS_PER_YBIN = 200       # bins thinner than this are dropped
+BRIGHTNESS_Z_LOW = -0.8        # a marker is "low" in a section below this z
+BRIGHTNESS_MEDIAN_Z_FLAG = -0.5  # a section is flagged globally dim below this
+# Composition-controlled version: a phenotype contributes only if it clears this
+# count in EVERY section of the scan, so the comparison is like for like.
+COMPOSITION_MIN_CELLS = 200
+COMPOSITION_MIN_PHENOTYPES = 3   # warn if a scan has fewer qualifying phenotypes
 
 # ---- markers highlighted in diagnostics ------------------------------------
 KEY_MARKERS = [
@@ -136,6 +204,8 @@ GRID_COLOR = "#DDDDDD"
 AXIS_COLOR = "#333333"
 TEXT_COLOR = "#000000"
 FLAG_COLOR = "#B2182B"
+SCAN_BOUNDARY_COLOR = "#000000"
+SCAN_BOUNDARY_WIDTH = 4.0
 
 USE_FLOAT32 = True   # halve memory on the intensity columns
 
@@ -175,6 +245,12 @@ plt.rcParams.update({
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
 })
+
+# Palettes defined once so no cell depends on another cell having run.
+CMAP_DIVERGING = LinearSegmentedColormap.from_list(
+    "z", ["#2166AC", "#F7F7F7", "#B2182B"])
+CMAP_FEASIBILITY = LinearSegmentedColormap.from_list(
+    "feas", ["#FFFFFF", "#D9F0D3", "#7FBC41", "#1B7837"])
 
 FIG_DIR = os.path.join(OUT_DIR, "figures")
 TAB_DIR = os.path.join(OUT_DIR, "tables")
@@ -224,6 +300,16 @@ def marker_base(col):
     return col.split(":")[0].strip()
 
 
+def safe_vmax(arr, floor=1.0):
+    """np.nanmax(...) or 1.0 returns NaN when everything is NaN, since NaN is
+    truthy. This does what that line was meant to do."""
+    a = np.asarray(arr, dtype=float)
+    if not np.isfinite(a).any():
+        return floor
+    v = float(np.nanmax(np.abs(a)))
+    return v if np.isfinite(v) and v > 0 else floor
+
+
 def save_fig(fig, stem):
     out = []
     if SAVE_PDF:
@@ -258,107 +344,249 @@ def find_col(cols, prefix):
     return hits[0] if hits else None
 
 
+def zscore_within(block):
+    """
+    block: markers (rows) x sections (columns), positive intensities.
+    Returns log2 values z-scored across the columns of that block.
+    """
+    b = block.replace(0, np.nan)
+    lb = np.log2(b)
+    sd = lb.std(axis=1, ddof=1).replace(0, np.nan)
+    return lb.sub(lb.mean(axis=1), axis=0).div(sd, axis=0)
+
+
+def rank_within(block):
+    """
+    block: markers (rows) x sections (columns).
+    Rank 1 = dimmest of the block for that marker. NaN rows stay NaN.
+    """
+    return block.replace(0, np.nan).rank(axis=1, method="average",
+                                         na_option="keep")
+
+
 _tee = Tee(os.path.join(TAB_DIR, "00_diagnostics_report.txt"))
 sys.stdout = _tee
 
-banner("AKOYA SPATIAL LAYOUT AND BATCH DIAGNOSTICS")
+banner("AKOYA SPATIAL LAYOUT AND BATCH DIAGNOSTICS (revision 2)")
 print(f"Run time  : {datetime.now().isoformat(timespec='seconds')}")
 print(f"Data      : {DATA_DIR}")
+print(f"Inventory : {INVENTORY_TABLE_DIR}")
 print(f"Figures   : {FIG_DIR}")
 print(f"Tables    : {TAB_DIR}")
 
 
-# %% Cell 3 - Q2: between-slide vs within-slide intensity spread
+# %% Cell 3 - inventory metadata: scan identity and section position
+# =============================================================================
+# Read once, up front, so every later cell keys on the same scan definition.
+
+banner("INVENTORY METADATA")
+
+fs_path = os.path.join(INVENTORY_TABLE_DIR, "01_file_summary.csv")
+ms_path = os.path.join(INVENTORY_TABLE_DIR, "06_marker_stats_long.csv")
+cnt_path = os.path.join(INVENTORY_TABLE_DIR, "04_phenotype_counts_long.csv")
+
+INV = None
+SCAN_FROM_INVENTORY = {}
+POS_FROM_INVENTORY = {}
+if os.path.exists(fs_path):
+    INV = pd.read_csv(fs_path)
+    print(f"    loaded 01_file_summary.csv  ({INV.shape[0]} x {INV.shape[1]})")
+    if SCAN_COL in INV.columns:
+        SCAN_FROM_INVENTORY = dict(zip(INV["sample_id"], INV[SCAN_COL].astype(str)))
+        print(f"    scan key   : '{SCAN_COL}' from script 01")
+    else:
+        print(f"    WARNING: '{SCAN_COL}' absent. Run script 01 revision 2. "
+              f"Falling back to the Image column parsed from the raw CSVs, and "
+              f"Q2 will fall back to treatment, which cannot be described "
+              f"accurately.")
+    if POSITION_COL in INV.columns:
+        POS_FROM_INVENTORY = {r["sample_id"]: (int(r[POSITION_COL])
+                                               if pd.notna(r[POSITION_COL]) else None)
+                              for _, r in INV.iterrows()}
+        print(f"    position   : '{POSITION_COL}' from script 01")
+    else:
+        print(f"    WARNING: '{POSITION_COL}' absent. Position rank will be "
+              f"recomputed here from Y extents.")
+else:
+    print(f"    WARNING: {fs_path} not found. Run script 01 first.")
+
+
+# %% Cell 4 - Q2: between-scan vs within-scan intensity spread
 # =============================================================================
 # Uses the p99 values already computed in script 01. No raw reads needed.
 
-banner("Q2 - BETWEEN-SLIDE VS WITHIN-SLIDE INTENSITY SPREAD")
-
-ms_path = os.path.join(INVENTORY_TABLE_DIR, "06_marker_stats_long.csv")
-fs_path = os.path.join(INVENTORY_TABLE_DIR, "01_file_summary.csv")
+banner("Q2 - BETWEEN-SCAN VS WITHIN-SCAN INTENSITY SPREAD")
 
 var_tbl = pd.DataFrame()
-if not (os.path.exists(ms_path) and os.path.exists(fs_path)):
+if not (os.path.exists(ms_path) and INV is not None):
     print(f"    WARNING: inventory tables not found. Skipping Q2.")
 else:
     ms = pd.read_csv(ms_path)
-    fs = pd.read_csv(fs_path)
-    slide_of = dict(zip(fs["sample_id"], fs["treatment"]))
 
-    ms["slide"] = ms["sample_id"].map(slide_of)
+    # Prefer the scan_id already carried in the marker table, then the file
+    # summary, then treatment as a last resort with an explicit warning.
+    if SCAN_COL in ms.columns:
+        ms["scan"] = ms[SCAN_COL].astype(str)
+        scan_source = f"'{SCAN_COL}' column of 06_marker_stats_long.csv"
+    elif SCAN_FROM_INVENTORY:
+        ms["scan"] = ms["sample_id"].map(SCAN_FROM_INVENTORY)
+        scan_source = f"'{SCAN_COL}' column of 01_file_summary.csv"
+    else:
+        ms["scan"] = ms["sample_id"].map(dict(zip(INV["sample_id"],
+                                                  INV["treatment"])))
+        scan_source = "treatment (FALLBACK, not a real scan key)"
+    print(f"    grouping variable: {scan_source}")
+
+    arm_of_sample = dict(zip(INV["sample_id"], INV["treatment"]))
+    ms["arm"] = ms["sample_id"].map(arm_of_sample)
+    arm_of_scan = (ms.drop_duplicates("sample_id")
+                   .groupby("scan")["arm"].agg(lambda v: sorted(set(v))))
+    single_arm_scans = all(len(v) == 1 for v in arm_of_scan)
+    print(f"    scans: {list(arm_of_scan.index)}")
+    for sc, arms in arm_of_scan.items():
+        n_sec = ms.loc[ms["scan"] == sc, "sample_id"].nunique()
+        print(f"      {sc}  {n_sec} section(s)  arm(s): {', '.join(arms)}")
+
     ms = ms.loc[ms["p99"].notna() & (ms["p99"] > 0)].copy()
     ms["log2_p99"] = np.log2(ms["p99"])
 
     rows = []
     for col, g in ms.groupby("column"):
-        slide_means = g.groupby("slide")["log2_p99"].mean()
-        if len(slide_means) < 2:
+        scan_means = g.groupby("scan")["log2_p99"].mean()
+        scan_sizes = g.groupby("scan")["log2_p99"].size()
+        if len(scan_means) < 2:
             continue
-        # within-slide variance, pooled across slides
-        within = g.groupby("slide")["log2_p99"].var(ddof=1).mean()
-        between = float(np.var(slide_means.to_numpy(), ddof=1))
-        total = within + between
-        rows.append({
+        k = len(scan_means)
+        n_bar = float(scan_sizes.mean())
+
+        # within-scan variance, pooled across scans
+        msw = float(g.groupby("scan")["log2_p99"].var(ddof=1).mean())
+        # naive quantity reported by revision 1, kept for traceability
+        raw_between = float(np.var(scan_means.to_numpy(), ddof=1))
+        naive_total = msw + raw_between
+        frac_naive = raw_between / naive_total if naive_total > 0 else np.nan
+
+        # corrected variance components for a (near) balanced one-way layout:
+        # E[MSB] = MSW + n * sigma2_between
+        msb = n_bar * raw_between
+        sigma2_between = max(0.0, (msb - msw) / n_bar) if n_bar > 0 else np.nan
+        icc_total = sigma2_between + msw
+        icc = sigma2_between / icc_total if icc_total > 0 else np.nan
+
+        rec = {
             "column": col,
             "marker": marker_base(col),
             "is_key_marker": marker_base(col) in KEY_MARKERS,
-            "within_slide_var": within,
-            "between_slide_var": between,
-            "frac_between_slide": between / total if total > 0 else np.nan,
-            "log2_slide_diff": float(slide_means.get(CONDITION_ORDER[1], np.nan)
-                                     - slide_means.get(CONDITION_ORDER[0], np.nan)),
-            "within_slide_sd": np.sqrt(within),
-        })
-    var_tbl = pd.DataFrame(rows).sort_values("frac_between_slide", ascending=False)
+            "n_scans": k,
+            "mean_sections_per_scan": n_bar,
+            "within_scan_var": msw,
+            "raw_between_scan_var": raw_between,
+            "sigma2_between_scan": sigma2_between,
+            "frac_between_scan_naive": frac_naive,
+            "icc_between_scan": icc,
+            "within_scan_sd": np.sqrt(msw),
+        }
+        # direction, only meaningful when each scan carries one arm
+        if single_arm_scans:
+            per_arm = {arm_of_scan[sc][0]: v for sc, v in scan_means.items()}
+            rec["log2_scan_diff"] = float(
+                per_arm.get(CONDITION_ORDER[1], np.nan)
+                - per_arm.get(CONDITION_ORDER[0], np.nan))
+        else:
+            rec["log2_scan_diff"] = np.nan
 
-    print(f"    {len(var_tbl)} markers decomposed\n")
-    print("    IMPORTANT: slide is perfectly confounded with condition (one scan")
-    print("    per group). A high between-slide fraction does NOT prove batch")
-    print("    effect, and a low one does NOT prove absence of biology. This only")
-    print("    flags which markers carry risk if a shared threshold is applied.\n")
+        # backwards-compatible aliases for revision 1 column names
+        rec["within_slide_var"] = rec["within_scan_var"]
+        rec["between_slide_var"] = rec["raw_between_scan_var"]
+        rec["frac_between_slide"] = rec["frac_between_scan_naive"]
+        rec["within_slide_sd"] = rec["within_scan_sd"]
+        rec["log2_slide_diff"] = rec["log2_scan_diff"]
+        rows.append(rec)
 
-    sub("Markers most dominated by between-slide variation (top 20)")
+    var_tbl = pd.DataFrame(rows).sort_values("icc_between_scan", ascending=False)
+
+    print(f"\n    {len(var_tbl)} markers decomposed\n")
+    print("    WHAT THIS QUANTITY IS, AND IS NOT")
+    print("    Scan is perfectly confounded with treatment arm in this cohort:")
+    print("    one acquisition per group. A high between-scan fraction is")
+    print("    therefore consistent with a staining batch difference AND with a")
+    print("    real biological difference between a granuloma-rich lung and a")
+    print("    treated lung. Nothing in this table separates the two. CD3e,")
+    print("    CD163, CD4 and IFNG rank high partly because they are the markers")
+    print("    that SHOULD differ biologically between these arms, so reading")
+    print("    their scores as evidence of batch would be wrong.")
+    print("    What the table does support is the opposite direction: a marker")
+    print("    with a LOW between-scan component cannot be carrying much of an")
+    print("    acquisition difference, so it is safe for cross-arm comparison.\n")
+    print("    Two columns are reported. frac_between_scan_naive is")
+    print("    between / (between + within) using the raw variance of the scan")
+    print("    means, which is what revision 1 reported and which is biased")
+    print("    upward because the variance of group means already contains")
+    print("    within-group variance over n. icc_between_scan uses the corrected")
+    print("    component (MSB - MSW) / n and is the one to quote.")
+
+    sub("Markers most dominated by between-scan variation (top 20 by ICC)")
+    print(f"    {'column':<48}{'ICC':>7}{'naive':>8}{'log2 diff':>11}")
     for _, r in var_tbl.head(20).iterrows():
         star = " *" if r["is_key_marker"] else ""
-        print(f"    {r['column']:<48} frac_between={r['frac_between_slide']:.3f}  "
-              f"log2 diff={r['log2_slide_diff']:+.2f}{star}")
+        print(f"    {r['column'][:47]:<48}{r['icc_between_scan']:>7.3f}"
+              f"{r['frac_between_scan_naive']:>8.3f}"
+              f"{r['log2_scan_diff']:>+11.2f}{star}")
+
+    sub("Most comparable markers (lowest ICC), safest for cross-arm work")
+    for _, r in var_tbl.tail(15).iloc[::-1].iterrows():
+        star = " *" if r["is_key_marker"] else ""
+        print(f"    {r['column'][:47]:<48}{r['icc_between_scan']:>7.3f}"
+              f"{r['frac_between_scan_naive']:>8.3f}"
+              f"{r['log2_scan_diff']:>+11.2f}{star}")
 
     sub("Key phenotype-calling markers")
+    print(f"    {'column':<48}{'ICC':>7}{'naive':>8}{'log2 diff':>11}"
+          f"{'within sd':>11}")
     for _, r in var_tbl.loc[var_tbl["is_key_marker"]].iterrows():
-        print(f"    {r['column']:<48} frac_between={r['frac_between_slide']:.3f}  "
-              f"log2 diff={r['log2_slide_diff']:+.2f}  "
-              f"within-slide sd={r['within_slide_sd']:.2f}")
+        print(f"    {r['column'][:47]:<48}{r['icc_between_scan']:>7.3f}"
+              f"{r['frac_between_scan_naive']:>8.3f}"
+              f"{r['log2_scan_diff']:>+11.2f}{r['within_scan_sd']:>11.2f}")
 
     # ---- figure F10 ---------------------------------------------------------
-    plot_tbl = var_tbl.copy()
-    fig, ax = plt.subplots(figsize=(18, 14))
-    ax.scatter(plot_tbl["within_slide_sd"], plot_tbl["frac_between_slide"],
-               s=200, color="#BBBBBB", edgecolor="#FFFFFF", linewidth=1.5,
-               zorder=3, label="all markers")
-    key = plot_tbl.loc[plot_tbl["is_key_marker"]]
-    ax.scatter(key["within_slide_sd"], key["frac_between_slide"],
-               s=520, color="#B2182B", edgecolor="#FFFFFF", linewidth=2.5,
-               zorder=4, label="phenotype-calling markers")
-    for _, r in key.iterrows():
-        ax.annotate(r["marker"], (r["within_slide_sd"], r["frac_between_slide"]),
-                    textcoords="offset points", xytext=(12, 8),
-                    fontsize=FONT_SIZE_ANNOT - 8)
-    ax.axhline(0.5, color="#000000", linestyle="--", linewidth=3)
-    ax.set_xlabel("Within-slide spread of log$_2$(p99), SD")
-    ax.set_ylabel("Fraction of variance between slides")
-    ax.set_ylim(0, 1.02)
-    ax.set_title("Where marker intensity variation lives\n"
-                 "High on the y axis = confounded with condition, cannot be "
-                 "separated from batch",
-                 fontsize=FONT_SIZE_TITLE - 6)
-    style_axes(ax)
-    ax.legend(loc="lower right", frameon=False, fontsize=FONT_SIZE_LEGEND - 4)
+    fig, axes = plt.subplots(1, 2, figsize=(32, 14))
+
+    for ax, ycol, ttl in zip(
+            axes,
+            ["icc_between_scan", "frac_between_scan_naive"],
+            ["Corrected component (ICC)", "Naive ratio (revision 1)"]):
+        ax.scatter(var_tbl["within_scan_sd"], var_tbl[ycol],
+                   s=200, color="#BBBBBB", edgecolor="#FFFFFF", linewidth=1.5,
+                   zorder=3, label="all markers")
+        key = var_tbl.loc[var_tbl["is_key_marker"]]
+        ax.scatter(key["within_scan_sd"], key[ycol],
+                   s=520, color=FLAG_COLOR, edgecolor="#FFFFFF", linewidth=2.5,
+                   zorder=4, label="phenotype-calling markers")
+        for _, r in key.iterrows():
+            ax.annotate(r["marker"], (r["within_scan_sd"], r[ycol]),
+                        textcoords="offset points", xytext=(12, 8),
+                        fontsize=FONT_SIZE_ANNOT - 8)
+        ax.axhline(0.5, color="#000000", linestyle="--", linewidth=3)
+        ax.set_xlabel("Within-scan spread of log$_2$(p99), SD",
+                      fontsize=FONT_SIZE_BASE - 4)
+        ax.set_ylabel("Between-scan share of variance",
+                      fontsize=FONT_SIZE_BASE - 4)
+        ax.set_ylim(-0.02, 1.02)
+        ax.set_title(ttl, fontsize=FONT_SIZE_TITLE - 8)
+        style_axes(ax)
+    axes[0].legend(loc="lower right", frameon=False,
+                   fontsize=FONT_SIZE_LEGEND - 8)
+    fig.suptitle("Where marker intensity variation lives\n"
+                 "Scan and arm are the same factor here, so a high score is "
+                 "consistent with batch AND with biology. A LOW score is the "
+                 "informative direction.",
+                 y=1.05, fontsize=FONT_SIZE_TITLE - 8)
     save_fig(fig, "F10_variance_between_vs_within_slide")
 
     write_csv(var_tbl, "10_variance_decomposition.csv")
 
 
-# %% Cell 4 - single pass over the raw CSVs
+# %% Cell 5 - single pass over the raw CSVs
 # =============================================================================
 
 banner("LOADING RAW SECTION DATA (single pass)")
@@ -381,11 +609,13 @@ if XCOL is None or YCOL is None:
 dtype_map = {c: "float32" for c in INTENSITY_COLS + [XCOL, YCOL]} if USE_FLOAT32 else None
 print(f"    {len(INTENSITY_COLS)} intensity columns, X='{XCOL}', Y='{YCOL}'")
 
-sections = {}          # sid -> dict of light-weight arrays and summaries
-pheno_profiles = []    # tidy per-section per-phenotype mean marker profile
-ybin_rows = []         # within-section Y-decile marker medians
-section_marker_med = []  # per-section median for every marker
-ido_cd68 = {}          # sid -> np.array of IDO1 values on CD68-lineage cells
+sections = {}            # sid -> dict of light-weight arrays and summaries
+pheno_profiles = []      # tidy per-section per-phenotype marker profile
+ybin_rows = []           # within-section Y-decile marker medians
+section_marker_med = []  # per-section median for every marker (all cells)
+pheno_marker_med = []    # per-section per-phenotype median for every marker
+pheno_counts = {}        # sid -> Series of phenotype counts
+ido_cd68 = {}            # sid -> np.array of IDO1 values on CD68-lineage cells
 
 for path in csv_paths:
     sid = os.path.splitext(os.path.basename(path))[0]
@@ -400,8 +630,17 @@ for path in csv_paths:
         continue
 
     n = len(df)
-    scan = (str(df[IMAGE_COL].iloc[0]) if IMAGE_COL in df.columns and n
-            else f"scan_{prefix}")
+    # scan identity: inventory first, Image column second, prefix last
+    if sid in SCAN_FROM_INVENTORY:
+        scan = SCAN_FROM_INVENTORY[sid]
+        scan_src = "inventory"
+    elif IMAGE_COL in df.columns and n:
+        scan = str(df[IMAGE_COL].iloc[0])
+        scan_src = "Image column"
+    else:
+        scan = f"scan_{prefix}"
+        scan_src = "filename prefix"
+
     df["_pheno"] = (df[PHENOTYPE_COL].astype(str).map(ascii_safe)
                     if PHENOTYPE_COL in df.columns else "Unknown")
 
@@ -415,7 +654,7 @@ for path in csv_paths:
     # ---- geometry ----------------------------------------------------------
     y_lo, y_hi = float(np.nanmin(y)), float(np.nanmax(y))
     x_lo, x_hi = float(np.nanmin(x)), float(np.nanmax(x))
-    print(f"    n={n:,}  scan={scan}")
+    print(f"    n={n:,}  scan={scan}  ({scan_src})")
     print(f"    X {x_lo:,.0f} to {x_hi:,.0f}   Y {y_lo:,.0f} to {y_hi:,.0f}")
 
     # ---- downsampled points for plotting -----------------------------------
@@ -427,26 +666,44 @@ for path in csv_paths:
     sections[sid] = {
         "condition": cond,
         "scan": scan,
+        "position": POS_FROM_INVENTORY.get(sid),
         "n_cells": n,
         "x_lo": x_lo, "x_hi": x_hi, "y_lo": y_lo, "y_hi": y_hi,
         "x_plot": x[idx_plot], "y_plot": y[idx_plot],
         "pheno_plot": df["_pheno"].to_numpy()[idx_plot],
     }
 
-    # ---- per-section median of every marker --------------------------------
+    # ---- per-section median of every marker, all cells ---------------------
     med = df[INTENSITY_COLS].median(axis=0)
     for c, v in med.items():
         section_marker_med.append({"sample_id": sid, "condition": cond,
                                    "scan": scan, "column": c,
                                    "median": float(v)})
 
-    # ---- per-phenotype mean marker profile ---------------------------------
-    prof = df.groupby("_pheno")[INTENSITY_COLS].mean()
-    for ph, row in prof.iterrows():
-        for c, v in row.items():
-            pheno_profiles.append({"sample_id": sid, "condition": cond,
-                                   "phenotype": ph, "column": c,
-                                   "mean": float(v)})
+    # ---- per-phenotype marker profile: mean, median and count --------------
+    # The median is what the composition-controlled dimness test uses. Taking it
+    # within a phenotype means the comparison between sections is like for like,
+    # which the section-wide median cannot promise when composition ranges from
+    # 89 percent structural to 36 percent Other.
+    gb = df.groupby("_pheno")
+    prof_mean = gb[INTENSITY_COLS].mean()
+    prof_med = gb[INTENSITY_COLS].median()
+    sizes = gb.size()
+    pheno_counts[sid] = sizes
+    for ph in prof_mean.index:
+        for c in INTENSITY_COLS:
+            pheno_profiles.append({
+                "sample_id": sid, "condition": cond, "scan": scan,
+                "phenotype": ph, "column": c,
+                "mean": float(prof_mean.loc[ph, c]),
+                "median": float(prof_med.loc[ph, c]),
+                "n_cells": int(sizes.loc[ph]),
+            })
+            pheno_marker_med.append({
+                "sample_id": sid, "scan": scan, "phenotype": ph,
+                "column": c, "median": float(prof_med.loc[ph, c]),
+                "n_cells": int(sizes.loc[ph]),
+            })
 
     # ---- within-section Y deciles ------------------------------------------
     if ok.sum() > 0:
@@ -457,17 +714,17 @@ for path in csv_paths:
             bins = np.clip(np.digitize(yy, edges[1:-1]), 0, len(edges) - 2)
             sub_df = df.loc[ok, INTENSITY_COLS]
             sub_df = sub_df.assign(_bin=bins)
-            gb = sub_df.groupby("_bin")
-            sizes = gb.size()
-            meds = gb.median()
-            for b in meds.index:
-                if sizes.loc[b] < MIN_CELLS_PER_YBIN:
+            gb_y = sub_df.groupby("_bin")
+            sizes_y = gb_y.size()
+            meds_y = gb_y.median()
+            for b in meds_y.index:
+                if sizes_y.loc[b] < MIN_CELLS_PER_YBIN:
                     continue
                 for c in INTENSITY_COLS:
                     ybin_rows.append({
                         "sample_id": sid, "condition": cond,
-                        "y_decile": int(b), "n_cells": int(sizes.loc[b]),
-                        "column": c, "median": float(meds.loc[b, c]),
+                        "y_decile": int(b), "n_cells": int(sizes_y.loc[b]),
+                        "column": c, "median": float(meds_y.loc[b, c]),
                     })
 
     # ---- IDO1 on CD68-lineage cells ----------------------------------------
@@ -493,10 +750,38 @@ SAMPLE_ORDER = sorted(
     sections.keys(),
     key=lambda s: (cond_rank.get(sections[s]["condition"], 99), s)
 )
+scans = list(dict.fromkeys(sections[s]["scan"] for s in SAMPLE_ORDER))
+
+# ---- position rank: from inventory, or recomputed as a fallback -------------
+if any(sections[s]["position"] is None for s in SAMPLE_ORDER):
+    print("\n    Position rank missing for at least one section. Recomputing "
+          "from Y extents within each scan (rank 1 = smallest y_lo).")
+    for sc in scans:
+        members = sorted([s for s in SAMPLE_ORDER if sections[s]["scan"] == sc],
+                         key=lambda z: sections[z]["y_lo"])
+        for rank, s in enumerate(members, start=1):
+            sections[s]["position"] = rank
+
+SCAN_BOUNDARIES = [i - 0.5 for i in range(1, len(SAMPLE_ORDER))
+                   if sections[SAMPLE_ORDER[i]]["scan"]
+                   != sections[SAMPLE_ORDER[i - 1]]["scan"]]
+
+
+def draw_scan_boundaries(ax):
+    for b in SCAN_BOUNDARIES:
+        ax.axvline(b, color=SCAN_BOUNDARY_COLOR, linewidth=SCAN_BOUNDARY_WIDTH,
+                   zorder=6)
+
+
+def sect_tick(s):
+    p = sections[s]["position"]
+    return f"{short_label(s)}\n{sections[s]['scan']} pos{p if p else 'na'}"
+
 
 geom = pd.DataFrame([
     {"sample_id": s, "animal_id": short_label(s),
-     "condition": sections[s]["condition"], "scan": sections[s]["scan"],
+     "condition": sections[s]["condition"], "scan_id": sections[s]["scan"],
+     "slide_position_rank": sections[s]["position"],
      "n_cells": sections[s]["n_cells"],
      "x_lo": sections[s]["x_lo"], "x_hi": sections[s]["x_hi"],
      "y_lo": sections[s]["y_lo"], "y_hi": sections[s]["y_hi"],
@@ -506,19 +791,18 @@ geom = pd.DataFrame([
 ])
 
 
-# %% Cell 5 - Q1: physical slide layout
+# %% Cell 6 - Q1: physical slide layout
 # =============================================================================
 
 banner("Q1 - PHYSICAL SLIDE LAYOUT")
 
-scans = list(dict.fromkeys(sections[s]["scan"] for s in SAMPLE_ORDER))
 print(f"    {len(scans)} distinct scan(s):")
 for sc in scans:
     members = [s for s in SAMPLE_ORDER if sections[s]["scan"] == sc]
     print(f"        {sc}")
     for s in sorted(members, key=lambda z: sections[z]["y_lo"]):
-        print(f"            {s:<12} Y {sections[s]['y_lo']:>10,.0f} to "
-              f"{sections[s]['y_hi']:>10,.0f}")
+        print(f"            {s:<12} pos {sections[s]['position']}  "
+              f"Y {sections[s]['y_lo']:>10,.0f} to {sections[s]['y_hi']:>10,.0f}")
 
 # overlap check within a scan
 sub("Y-range overlap check within each scan")
@@ -542,7 +826,6 @@ for k, sc in enumerate(scans):
     ax = axes[k]
     members = [s for s in SAMPLE_ORDER if sections[s]["scan"] == sc]
     cond = sections[members[0]]["condition"] if members else "?"
-    base = CONDITION_COLORS.get(cond, "#999999")
     shades = ["#08519C", "#3182BD", "#6BAED6", "#BDD7E7"] if cond == "D1MT" \
         else ["#A63603", "#E6550D", "#FD8D3C", "#FDBE85"]
     for j, s in enumerate(sorted(members, key=lambda z: sections[z]["y_lo"])):
@@ -551,9 +834,9 @@ for k, sc in enumerate(scans):
                    color=shades[j % len(shades)], linewidths=0,
                    rasterized=True, label=short_label(s))
         ax.text(d["x_hi"] + 400, 0.5 * (d["y_lo"] + d["y_hi"]),
-                f"{short_label(s)}\n{d['n_cells']:,}",
-                fontsize=FONT_SIZE_ANNOT - 6, va="center")
-    ax.set_title(f"{cond}\n{sc.split(' - ')[0]}", fontsize=FONT_SIZE_TITLE - 8)
+                f"{short_label(s)}\npos {d['position']}\n{d['n_cells']:,}",
+                fontsize=FONT_SIZE_ANNOT - 8, va="center")
+    ax.set_title(f"{cond}\n{sc}", fontsize=FONT_SIZE_TITLE - 10)
     ax.set_xlabel("X (µm)")
     ax.set_ylabel("Y (µm)")
     ax.set_aspect("equal")
@@ -566,87 +849,178 @@ save_fig(fig, "F11_slide_layout")
 write_csv(geom, "11_section_geometry.csv")
 
 
-# %% Cell 6 - Q3: slide-position artifact test
+# %% Cell 7 - Q3: slide-position artifact test, two ways
 # =============================================================================
 
 banner("Q3 - SLIDE POSITION ARTIFACT TEST")
 
-smed = pd.DataFrame(section_marker_med)
-piv = smed.pivot_table(index="column", columns="sample_id", values="median")
+print("    Run twice.")
+print("      ALL CELLS      each marker's section-wide median, z-scored within")
+print("                     scan. What revision 1 did. Composition-sensitive.")
+print("      BY PHENOTYPE   each marker's median WITHIN a phenotype, z-scored")
+print("                     within scan, using only phenotypes with at least")
+print(f"                     {COMPOSITION_MIN_CELLS} cells in every section of")
+print("                     that scan. Composition cancels.")
+print("\n    Two statistics per section.")
+print("      median z              how far below its slide-mates it sits. With")
+print("                            four sections per scan the minimum possible")
+print("                            z is -1.50, so read -1.0 as near the floor.")
+print("      frac dimmest of four  fraction of comparisons where this section")
+print("                            ranks lowest of its four. Under no position")
+print("                            effect this is 0.25 exactly, with no")
+print("                            distributional assumption. This is the")
+print("                            statistic to quote.")
 
-# z-score each marker WITHIN its own slide, so the comparison is between the four
-# sections that were stained together
-z_frames = []
+smed = pd.DataFrame(section_marker_med)
+piv_all = smed.pivot_table(index="column", columns="sample_id", values="median")
+
+pmed = pd.DataFrame(pheno_marker_med)
+
+# ---- which phenotypes qualify for the composition-controlled test ------------
+sub("Phenotypes qualifying for the composition-controlled test")
+qualifying = {}
 for sc in scans:
     members = [s for s in SAMPLE_ORDER if sections[s]["scan"] == sc]
-    block = piv[members].replace(0, np.nan)
-    lb = np.log2(block)
-    z = lb.sub(lb.mean(axis=1), axis=0).div(lb.std(axis=1, ddof=1).replace(0, np.nan),
-                                            axis=0)
-    z_frames.append(z)
-zmat = pd.concat(z_frames, axis=1)[SAMPLE_ORDER]
+    keep = []
+    for ph in sorted(set(pmed["phenotype"])):
+        counts = [int(pheno_counts.get(s, pd.Series(dtype=int)).get(ph, 0))
+                  for s in members]
+        if len(counts) == len(members) and min(counts) >= COMPOSITION_MIN_CELLS:
+            keep.append(ph)
+    qualifying[sc] = keep
+    print(f"    {sc}: {len(keep)} phenotype(s)")
+    for ph in keep:
+        counts = [int(pheno_counts[s].get(ph, 0)) for s in members]
+        print(f"        {ph:<28} min {min(counts):>7,} cells")
+    if len(keep) < COMPOSITION_MIN_PHENOTYPES:
+        print(f"        WARNING: fewer than {COMPOSITION_MIN_PHENOTYPES} "
+              f"phenotypes qualify on {sc}. The composition-controlled test is "
+              f"thin here.")
 
-print("    Per-section median z-score across all markers")
-print("    (negative = this section is globally dimmer than its slide-mates)\n")
+# ---- build both z matrices and both rank matrices ---------------------------
+z_all_frames, r_all_frames = [], []
+z_ph_frames, r_ph_frames = [], []
+for sc in scans:
+    members = [s for s in SAMPLE_ORDER if sections[s]["scan"] == sc]
+
+    block = piv_all[members]
+    z_all_frames.append(zscore_within(block))
+    r_all_frames.append(rank_within(block))
+
+    keep = qualifying[sc]
+    if keep:
+        sub_p = pmed.loc[(pmed["scan"] == sc) & (pmed["phenotype"].isin(keep))]
+        wide = sub_p.pivot_table(index=["phenotype", "column"],
+                                 columns="sample_id", values="median")
+        wide = wide.reindex(columns=members)
+        z_ph_frames.append(zscore_within(wide))
+        r_ph_frames.append(rank_within(wide))
+
+zmat = pd.concat(z_all_frames, axis=1)[SAMPLE_ORDER]
+rmat = pd.concat(r_all_frames, axis=1)[SAMPLE_ORDER]
+zmat_ph = (pd.concat(z_ph_frames, axis=1)[SAMPLE_ORDER]
+           if z_ph_frames else pd.DataFrame())
+rmat_ph = (pd.concat(r_ph_frames, axis=1)[SAMPLE_ORDER]
+           if r_ph_frames else pd.DataFrame())
+
 summary_rows = []
 for s in SAMPLE_ORDER:
     col = zmat[s].dropna()
-    frac_low = float((col < -0.8).mean())
-    summary_rows.append({
+    rnk = rmat[s].dropna()
+    rec = {
         "sample_id": s, "animal_id": short_label(s),
         "condition": sections[s]["condition"],
+        "scan_id": sections[s]["scan"],
+        "slide_position_rank": sections[s]["position"],
         "y_lo": sections[s]["y_lo"],
-        "slide_position_rank": np.nan,
-        "median_z_all_markers": float(col.median()),
-        "frac_markers_low": frac_low,
+        "median_z_all_markers": float(col.median()) if len(col) else np.nan,
+        "frac_markers_low": float((col < BRIGHTNESS_Z_LOW).mean()) if len(col) else np.nan,
+        "frac_dimmest_of_scan": float((rnk == 1).mean()) if len(rnk) else np.nan,
         "n_markers": int(len(col)),
-    })
-pos_tbl = pd.DataFrame(summary_rows)
-for sc in scans:
-    members = [s for s in SAMPLE_ORDER if sections[s]["scan"] == sc]
-    order = sorted(members, key=lambda z: sections[z]["y_lo"])
-    for rank, s in enumerate(order, start=1):
-        pos_tbl.loc[pos_tbl["sample_id"] == s, "slide_position_rank"] = rank
+    }
+    if len(zmat_ph):
+        colp = zmat_ph[s].dropna()
+        rnkp = rmat_ph[s].dropna()
+        rec.update({
+            "median_z_by_phenotype": float(colp.median()) if len(colp) else np.nan,
+            "frac_low_by_phenotype": float((colp < BRIGHTNESS_Z_LOW).mean())
+            if len(colp) else np.nan,
+            "frac_dimmest_by_phenotype": float((rnkp == 1).mean())
+            if len(rnkp) else np.nan,
+            "n_phenotype_marker_pairs": int(len(colp)),
+        })
+    summary_rows.append(rec)
+pos_tbl = pd.DataFrame(summary_rows).sort_values(["scan_id", "slide_position_rank"])
 
-pos_tbl = pos_tbl.sort_values(["condition", "slide_position_rank"])
+sub("Per-section brightness, both versions")
+head = (f"    {'sample':<12}{'pos':>4}{'med z':>9}{'low%':>8}{'dim%':>8}"
+        f"{'med z ph':>10}{'low% ph':>10}{'dim% ph':>10}")
+print(head)
+print("    " + "-" * (len(head) - 4))
 for _, r in pos_tbl.iterrows():
-    flag = "   <-- globally dim" if r["median_z_all_markers"] < -0.5 else ""
-    print(f"    {r['sample_id']:<12} pos={int(r['slide_position_rank'])}  "
-          f"median z={r['median_z_all_markers']:+.2f}  "
-          f"markers below -0.8: {100*r['frac_markers_low']:5.1f}%{flag}")
+    flag = ("   <-- globally dim"
+            if r["median_z_all_markers"] < BRIGHTNESS_MEDIAN_Z_FLAG else "")
+    mz = r.get("median_z_by_phenotype", np.nan)
+    lp = r.get("frac_low_by_phenotype", np.nan)
+    dp = r.get("frac_dimmest_by_phenotype", np.nan)
+    print(f"    {r['sample_id']:<12}{int(r['slide_position_rank']):>4}"
+          f"{r['median_z_all_markers']:>+9.2f}"
+          f"{100*r['frac_markers_low']:>7.1f}%"
+          f"{100*r['frac_dimmest_of_scan']:>7.1f}%"
+          f"{mz:>+10.2f}{100*lp:>9.1f}%{100*dp:>9.1f}%{flag}")
+
+print(f"\n    Reference: 'dim%' is 25.0% under no position effect, in both")
+print(f"    versions. 'low%' has no clean null and is kept for continuity.")
+
+sub("Do the two versions agree?")
+if len(zmat_ph):
+    for _, r in pos_tbl.iterrows():
+        d_all = 100 * r["frac_dimmest_of_scan"]
+        d_ph = 100 * r["frac_dimmest_by_phenotype"]
+        note = ""
+        if abs(d_all - d_ph) > 20:
+            note = "   <-- versions disagree, composition is doing work here"
+        print(f"    {r['sample_id']:<12} all cells {d_all:>5.1f}%   "
+              f"by phenotype {d_ph:>5.1f}%{note}")
+    print("\n    A section that is dim on ALL CELLS but not BY PHENOTYPE was")
+    print("    never dim, it just holds different cells. A section dim on both")
+    print("    is dim for staining reasons and is a genuine exclusion candidate.")
+else:
+    print("    Composition-controlled version unavailable, no qualifying "
+          "phenotypes.")
 
 print("\n    INTERPRETATION GUIDE")
-print("    If 43102 and 43112 are dim across most of the 67 markers, the zero")
-print("    IDO1+ call in those two sections is a slide position artifact.")
-print("    If they are dim only for IDO1 and its correlates, it is more likely")
-print("    biology. Read the IDO1 row of F12 against the all-marker distribution.")
+print("    If 43102 and 43112 are dim across most of the 67 markers in BOTH")
+print("    versions, the zero IDO1+ call in those two sections is a slide")
+print("    position artifact. If they are dim only for IDO1 and its correlates,")
+print("    or only in the all-cell version, it is more likely biology or")
+print("    composition. Read the IDO1 row of F12 against the all-marker")
+print("    distribution.")
 
-# ---- F12: two panels --------------------------------------------------------
-fig, axes = plt.subplots(1, 2, figsize=(30, 16),
-                         gridspec_kw={"width_ratios": [1.15, 1.0]})
+# ---- F12: three panels ------------------------------------------------------
+fig, axes = plt.subplots(1, 3, figsize=(42, 16),
+                         gridspec_kw={"width_ratios": [1.15, 1.0, 1.0]})
 
-# left: heatmap of z, key markers
+# left: heatmap of z, key markers, all-cell version
 ax = axes[0]
 key_cols = [c for c in zmat.index if marker_base(c) in KEY_MARKERS]
 key_cols = sorted(key_cols, key=lambda c: KEY_MARKERS.index(marker_base(c)))
-sub_z = zmat.loc[key_cols, SAMPLE_ORDER]
-vmax = float(np.nanmax(np.abs(sub_z.to_numpy()))) or 1.0
-cmap = LinearSegmentedColormap.from_list("z", ["#2166AC", "#F7F7F7", "#B2182B"])
-im = ax.imshow(sub_z.to_numpy(), aspect="auto", cmap=cmap,
+z_key = zmat.loc[key_cols, SAMPLE_ORDER]
+vmax = safe_vmax(z_key.to_numpy())
+im = ax.imshow(z_key.to_numpy(), aspect="auto", cmap=CMAP_DIVERGING,
                norm=TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax))
 ax.set_xticks(np.arange(len(SAMPLE_ORDER)))
-ax.set_xticklabels([f"{short_label(s)}\npos {int(pos_tbl.loc[pos_tbl['sample_id']==s,'slide_position_rank'].iloc[0])}"
-                    for s in SAMPLE_ORDER], fontsize=FONT_SIZE_TICK - 10)
+ax.set_xticklabels([sect_tick(s) for s in SAMPLE_ORDER],
+                   fontsize=FONT_SIZE_TICK - 14)
 ax.set_yticks(np.arange(len(key_cols)))
 ax.set_yticklabels([marker_base(c) for c in key_cols], fontsize=FONT_SIZE_TICK - 10)
-n_first = sum(1 for s in SAMPLE_ORDER if sections[s]["condition"] == CONDITION_ORDER[0])
-ax.axvline(n_first - 0.5, color="#000000", linewidth=4)
+draw_scan_boundaries(ax)
 cb = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
-cb.set_label("z within slide", fontsize=FONT_SIZE_BASE - 8)
+cb.set_label("z within scan", fontsize=FONT_SIZE_BASE - 8)
 cb.ax.tick_params(labelsize=FONT_SIZE_TICK - 12)
-ax.set_title("Marker medians, z-scored within slide", fontsize=FONT_SIZE_TITLE - 8)
+ax.set_title("Marker medians, all cells", fontsize=FONT_SIZE_TITLE - 10)
 
-# right: distribution of z across ALL markers per section
+# middle: distribution of z across ALL markers per section, both versions
 ax = axes[1]
 data = [zmat[s].dropna().to_numpy() for s in SAMPLE_ORDER]
 bp = ax.boxplot(data, vert=True, patch_artist=True, widths=0.6,
@@ -658,22 +1032,62 @@ for patch, s in zip(bp["boxes"], SAMPLE_ORDER):
     patch.set_facecolor(CONDITION_COLORS.get(sections[s]["condition"], "#999999"))
     patch.set_alpha(0.75)
     patch.set_edgecolor("#333333")
+if len(zmat_ph):
+    for i, s in enumerate(SAMPLE_ORDER, start=1):
+        v = zmat_ph[s].dropna()
+        if len(v):
+            ax.scatter([i], [float(v.median())], s=520, marker="D",
+                       color="#000000", edgecolor="#FFFFFF", linewidth=3,
+                       zorder=6)
 ax.axhline(0, color="#000000", linestyle="--", linewidth=3)
 ax.set_xticks(np.arange(1, len(SAMPLE_ORDER) + 1))
 ax.set_xticklabels([short_label(s) for s in SAMPLE_ORDER],
-                   rotation=45, ha="right", fontsize=FONT_SIZE_TICK - 6)
-ax.set_ylabel("z of log$_2$ median, all 67 markers")
-ax.set_title("Global brightness per section", fontsize=FONT_SIZE_TITLE - 8)
+                   rotation=45, ha="right", fontsize=FONT_SIZE_TICK - 8)
+ax.set_ylabel("z of log$_2$ median", fontsize=FONT_SIZE_BASE - 6)
+ax.set_title("Global brightness per section\n"
+             "(box = all cells, diamond = median by phenotype)",
+             fontsize=FONT_SIZE_TITLE - 14)
 style_axes(ax)
 
-fig.suptitle("Is the bottom section of each slide globally dim?\n"
-             "A section shifted down across most markers indicates a position "
-             "artifact, not biology", y=1.03, fontsize=FONT_SIZE_TITLE - 4)
+# right: the rank statistic, with the 25 percent null drawn
+ax = axes[2]
+xs = np.arange(len(SAMPLE_ORDER))
+w = 0.38
+ax.bar(xs - w / 2, [100 * pos_tbl.set_index("sample_id").loc[s, "frac_dimmest_of_scan"]
+                    for s in SAMPLE_ORDER],
+       width=w, color="#BBBBBB", edgecolor="#FFFFFF", linewidth=2,
+       label="all cells", zorder=3)
+if len(zmat_ph):
+    ax.bar(xs + w / 2,
+           [100 * pos_tbl.set_index("sample_id").loc[s, "frac_dimmest_by_phenotype"]
+            for s in SAMPLE_ORDER],
+           width=w, color=FLAG_COLOR, edgecolor="#FFFFFF", linewidth=2,
+           label="by phenotype", zorder=3)
+ax.axhline(25.0, color="#000000", linestyle="--", linewidth=3.5)
+ax.text(len(SAMPLE_ORDER) - 0.4, 27, "no position effect = 25%", ha="right",
+        fontsize=FONT_SIZE_ANNOT - 8)
+ax.set_xticks(xs)
+ax.set_xticklabels([sect_tick(s) for s in SAMPLE_ORDER],
+                   fontsize=FONT_SIZE_TICK - 14)
+ax.set_ylabel("% of comparisons where this section\nis the dimmest of its four",
+              fontsize=FONT_SIZE_BASE - 10)
+ax.set_ylim(0, 105)
+ax.set_title("Rank statistic", fontsize=FONT_SIZE_TITLE - 10)
+style_axes(ax)
+draw_scan_boundaries(ax)
+ax.legend(frameon=False, fontsize=FONT_SIZE_LEGEND - 10, loc="upper center")
+
+fig.suptitle("Is the position-1 section of each slide globally dim?\n"
+             "Composition-controlled and rank-based versions included, because "
+             "section composition ranges from 89% structural to 36% Other",
+             y=1.04, fontsize=FONT_SIZE_TITLE - 6)
 save_fig(fig, "F12_slide_position_artifact")
 
 write_csv(pos_tbl, "12_slide_position_summary.csv")
 write_csv(zmat.reset_index().rename(columns={"index": "column"}),
           "12b_marker_z_within_slide.csv")
+if len(zmat_ph):
+    write_csv(zmat_ph.reset_index(), "12d_marker_z_by_phenotype.csv")
 
 # ---- within-section Y gradient for IDO1 -------------------------------------
 ybin = pd.DataFrame(ybin_rows)
@@ -701,7 +1115,7 @@ if len(ybin):
     write_csv(ybin, "12c_within_section_y_deciles.csv")
 
 
-# %% Cell 7 - Q4: IDO1 distribution on CD68+ macrophages
+# %% Cell 8 - Q4: IDO1 distribution on CD68+ macrophages
 # =============================================================================
 
 banner("Q4 - IDO1 DISTRIBUTION ON CD68-LINEAGE MACROPHAGES")
@@ -718,6 +1132,8 @@ else:
         rows.append({
             "sample_id": s, "animal_id": short_label(s),
             "condition": sections[s]["condition"],
+            "scan_id": sections[s]["scan"],
+            "slide_position_rank": sections[s]["position"],
             "n_cd68_lineage": int(len(v)),
             "min": float(np.min(v)), "p25": float(np.percentile(v, 25)),
             "median": float(np.median(v)), "p75": float(np.percentile(v, 75)),
@@ -725,7 +1141,7 @@ else:
             "max": float(np.max(v)), "frac_zero": float(np.mean(v == 0)),
         })
     ido_sum = pd.DataFrame(rows)
-    with pd.option_context("display.width", 220, "display.max_columns", 30):
+    with pd.option_context("display.width", 240, "display.max_columns", 30):
         print(ido_sum.to_string(index=False))
 
     fig, axes = plt.subplots(1, 2, figsize=(30, 13))
@@ -766,9 +1182,10 @@ else:
         ax.fill_between(centers, base, base + h * 0.9, color=col, alpha=0.7,
                         linewidth=0)
         ax.plot(centers, base + h * 0.9, color="#333333", linewidth=2)
+        pos = sections[s]["position"]
         ax.text(bins[-1] * 1.01, base + 0.35,
-                f"{short_label(s)}  n={len(v):,}",
-                fontsize=FONT_SIZE_ANNOT - 8, va="center")
+                f"{short_label(s)}  pos{pos}  n={len(v):,}",
+                fontsize=FONT_SIZE_ANNOT - 10, va="center")
     ax.set_yticks([])
     ax.set_xlabel("log(1 + IDO1 cytoplasm)")
     ax.set_title("Per-section distribution", fontsize=FONT_SIZE_TITLE - 8)
@@ -784,7 +1201,7 @@ else:
     write_csv(ido_sum, "13_ido1_cd68_summary.csv")
 
 
-# %% Cell 8 - Q5: what is in "Other"
+# %% Cell 9 - Q5: what is in "Other"
 # =============================================================================
 
 banner('Q5 - MARKER PROFILE OF THE "OTHER" BUCKET')
@@ -819,11 +1236,11 @@ else:
     ph_use = [p for p in PHENOTYPE_ORDER if p in z.index]
     key_cols = [c for c in z.columns if marker_base(c) in KEY_MARKERS]
     key_cols = sorted(key_cols, key=lambda c: KEY_MARKERS.index(marker_base(c)))
-    sub_z = z.loc[ph_use, key_cols]
-    vmax = float(np.nanmax(np.abs(sub_z.to_numpy()))) or 1.0
+    z_ph = z.loc[ph_use, key_cols]
+    vmax = safe_vmax(z_ph.to_numpy())
 
     fig, ax = plt.subplots(figsize=(24, 14))
-    im = ax.imshow(sub_z.to_numpy(), aspect="auto", cmap=cmap,
+    im = ax.imshow(z_ph.to_numpy(), aspect="auto", cmap=CMAP_DIVERGING,
                    norm=TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax))
     ax.set_xticks(np.arange(len(key_cols)))
     ax.set_xticklabels([marker_base(c) for c in key_cols], rotation=90,
@@ -844,7 +1261,7 @@ else:
     write_csv(prof, "14b_phenotype_marker_profiles_long.csv")
 
 
-# %% Cell 9 - spatial maps of key immune populations
+# %% Cell 10 - spatial maps of key immune populations
 # =============================================================================
 
 banner("SPATIAL MAPS OF KEY IMMUNE POPULATIONS")
@@ -865,8 +1282,9 @@ for k, s in enumerate(SAMPLE_ORDER):
         ax.scatter(d["x_plot"][m], d["y_plot"][m], s=6,
                    color=PHENOTYPE_COLORS.get(p, "#000000"),
                    linewidths=0, rasterized=True)
-    ax.set_title(f"{short_label(s)}  ({d['condition']})\n{d['n_cells']:,} cells",
-                 fontsize=FONT_SIZE_TITLE - 10)
+    ax.set_title(f"{short_label(s)}  ({d['condition']}, {d['scan']} pos{d['position']})"
+                 f"\n{d['n_cells']:,} cells",
+                 fontsize=FONT_SIZE_TITLE - 14)
     ax.set_aspect("equal")
     ax.set_xticks([]); ax.set_yticks([])
     for sp in ax.spines.values():
@@ -884,16 +1302,18 @@ fig.suptitle("Spatial distribution of macrophage and lymphocyte populations\n"
 save_fig(fig, "F15_spatial_maps_key_populations")
 
 
-# %% Cell 10 - Q6: nearest-neighbour pair feasibility
+# %% Cell 11 - Q6: nearest-neighbour pair feasibility
 # =============================================================================
 
 banner("Q6 - NEAREST-NEIGHBOUR PAIR FEASIBILITY")
 
-cnt_path = os.path.join(INVENTORY_TABLE_DIR, "04_phenotype_counts_long.csv")
 pair_tbl = pd.DataFrame()
 if not os.path.exists(cnt_path):
     print(f"    WARNING: {cnt_path} not found. Skipping Q6.")
 else:
+    print("    NOTE: all eight sections are counted here, including the two")
+    print("    position-1 candidates. Feasibility is a property of the data as")
+    print("    delivered; the exclusion decision belongs to Q3 and script 03.\n")
     pl = pd.read_csv(cnt_path)
     pl["phenotype_display"] = pl["phenotype"].map(ascii_safe)
     cmat = (pl.pivot_table(index="phenotype_display", columns="sample_id",
@@ -936,15 +1356,13 @@ else:
     fig, axes = plt.subplots(1, 2, figsize=(30, 13))
     n_per_arm = {c: sum(1 for s in SAMPLE_ORDER
                         if sections[s]["condition"] == c) for c in CONDITION_ORDER}
-    greens = LinearSegmentedColormap.from_list(
-        "feas", ["#FFFFFF", "#D9F0D3", "#7FBC41", "#1B7837"])
     for k, cond in enumerate(CONDITION_ORDER):
         ax = axes[k]
         m = pair_tbl.pivot_table(index="anchor", columns="target",
                                  values=f"n_animals_ok_{cond}")
         m = m.reindex(index=[a for a in NN_ANCHORS if a in m.index],
                       columns=[t for t in NN_TARGETS if t in m.columns])
-        im = ax.imshow(m.to_numpy(dtype=float), cmap=greens, vmin=0,
+        im = ax.imshow(m.to_numpy(dtype=float), cmap=CMAP_FEASIBILITY, vmin=0,
                        vmax=n_per_arm[cond], aspect="auto")
         ax.set_xticks(np.arange(m.shape[1]))
         ax.set_xticklabels(m.columns, rotation=45, ha="right",
@@ -971,7 +1389,7 @@ else:
     write_csv(pair_tbl, "15_nn_pair_feasibility.csv")
 
 
-# %% Cell 11 - wrap up
+# %% Cell 12 - wrap up
 # =============================================================================
 
 banner("SUMMARY")
@@ -982,20 +1400,34 @@ print(f"Total cells     : {sum(sections[s]['n_cells'] for s in SAMPLE_ORDER):,}"
 
 sub("Questions and where to read the answer")
 print("  Q1 section tiling        -> F11_slide_layout, 11_section_geometry.csv")
-print("  Q2 batch confound        -> F10_variance_between_vs_within_slide,")
+print("  Q2 scan confound         -> F10_variance_between_vs_within_slide,")
 print("                              10_variance_decomposition.csv")
-print("  Q3 position artifact     -> F12_slide_position_artifact, F12b, 12_*.csv")
+print("                              quote icc_between_scan, not the naive ratio")
+print("  Q3 position artifact     -> F12_slide_position_artifact, F12b,")
+print("                              12_*.csv, 12d_marker_z_by_phenotype.csv")
+print("                              quote frac_dimmest_by_phenotype against 25%")
 print("  Q4 IDO1 distribution     -> F13_ido1_distribution_cd68, 13_*.csv")
 print('  Q5 what is in "Other"    -> F14_phenotype_marker_profiles, 14_*.csv')
 print("  spatial overview         -> F15_spatial_maps_key_populations")
 print("  Q6 NN feasibility        -> F16_nn_pair_feasibility, 15_*.csv")
 
 sub("Decisions still open after this run")
-print("  1. Whether 43102 and 43112 stay in the analysis, and on what grounds")
+print("  1. Whether 43102 and 43112 stay in the analysis, and on what grounds.")
+print("     The composition-controlled rank statistic is the version to decide")
+print("     on. If a section is dim on all cells but not by phenotype, it was")
+print("     never dim.")
 print("  2. Whether IDO1 positivity is used as the supplied binary call or as a")
-print("     within-slide continuous measure")
+print("     within-scan continuous measure")
 print("  3. Which anchor/target pairs go into the nearest-neighbour work")
 print('  4. Whether "Other" is excluded, split, or carried as an unknown class')
+
+sub("What NOT to conclude from Q2")
+print("  A high between-scan score is not evidence of batch. Scan and arm are")
+print("  the same factor in this design. The markers that score highest are the")
+print("  ones expected to differ biologically between a granuloma-rich lung and")
+print("  a treated lung. Only the low end of that table is interpretable, and")
+print("  what it says is that those markers cannot be carrying much of an")
+print("  acquisition difference.")
 
 banner("DONE")
 sys.stdout = _tee.terminal

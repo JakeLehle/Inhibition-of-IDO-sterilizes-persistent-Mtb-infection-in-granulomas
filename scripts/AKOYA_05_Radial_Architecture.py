@@ -68,7 +68,7 @@ Author: Jake Lehle, Kaushal Lab, Texas Biomed
 # %% Cell 1 - parameters
 # =============================================================================
 
-IN_DIR = "/master/jlehle/WORKING/AKOYA/structures_rev3"
+IN_DIR = "/master/jlehle/WORKING/AKOYA/structures_rev4"
 CELL_DIR = f"{IN_DIR}/cell_assignments"
 FOCI_TABLE = f"{IN_DIR}/tables/35_foci_structures_relative.csv"
 OUT_DIR = "/master/jlehle/WORKING/AKOYA/radial"
