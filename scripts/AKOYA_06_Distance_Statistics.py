@@ -4,67 +4,104 @@
 AKOYA Phenocycler - CORRECTED DISTANCE STATISTICS AND FORMAL TREATMENT TESTS
 Rhesus Mtb + SIV, D1MT-treated (G3) vs untreated (G4), necropsy lung sections
 
-Script 06 of the AKOYA analysis series.
+Script 06 of the AKOYA analysis series. REVISION 2.
 
-WHAT THIS FIXES FROM SCRIPT 05
+WHAT THIS FIXED FROM SCRIPT 05 (revision 1, unchanged and still correct)
     1. EFFECT SIZE, NOT z, IS PRIMARY. Script 05 reported z against a
        within-structure permutation null. Because the null preserves cell
-       counts, its width shrinks with structure size: treated structures hold
-       1,328 to 2,337 cells while untreated hold 32,707 to 99,334. A z of -59
-       in 36463 reflects a very tight null, not a large biological effect.
-       Reporting now leads with delta (observed minus null mean) in radial units
-       or microns, which is comparable across arms. z is retained only as a
-       per-structure significance flag.
+       counts, its width shrinks with structure size, so a large z can reflect a
+       tight null rather than a large effect. Reporting leads with delta,
+       observed minus null mean, in radial units or microns. z is retained only
+       as a per-structure significance flag.
 
     2. NO CENSORING IN NEAREST-NEIGHBOUR DISTANCES. Script 05 used a k-neighbour
-       index for permutation speed; 238 of 408 rows exceeded 20% censoring and
-       some reached 90%, which biases the reported median downward by
-       construction. This script builds a KD-tree on the TARGET cells only and
-       queries anchors against it, giving the exact nearest-target distance.
-       Permutations rebuild a small target tree each time, which costs about a
-       millisecond. The speed problem the k-index solved did not exist.
+       index; 271 of 463 rows exceeded 20 percent censoring and some reached 90
+       percent, which biases the reported median downward by construction. This
+       script builds a KD-tree on the TARGET cells only and queries anchors
+       against it, giving the exact nearest-target distance.
 
-    3. POOLED PER-ANIMAL ANALYSIS. With one focus per treated animal, a "median
-       across structures" has no within-animal variance. Cells are now pooled
-       across all foci within an animal (distances still computed within each
-       cell's own focus, then pooled), giving one properly supported measurement
-       per animal.
+    3. POOLED PER-ANIMAL ANALYSIS. With few foci per treated animal, a median
+       across structures has almost no within-animal variance. Cells are pooled
+       across all foci within an animal, distances still computed within each
+       cell's own focus.
 
-    4. TREGS RECOVERED. Script 05's tier gate dropped every Treg row from the
-       animal summaries, so Q4 went unanswered. Tiers are now reported as a
-       column and never used to filter. Pooling within animal also raises Treg
-       counts into a usable range.
+    4. TREGS RECOVERED. Tiers are reported as a column and never used to filter.
 
-    5. DEGENERATE POLARISATION COLUMNS REMOVED. A within-section percentile makes
-       the iNOS-high and Arg1-high sets exactly equal in size, so pct_inos_only
-       and pct_arg1_only are identical by construction and carry no information.
-       Reporting now uses double-positive against the independence expectation,
-       plus spatial mixing, with no tier filtering so treated structures appear.
+    5. DEGENERATE POLARISATION COLUMNS REMOVED. A within-section percentile
+       makes the iNOS-high and Arg1-high sets exactly equal in size, so
+       pct_inos_only and pct_arg1_only are identical by construction. Script 05
+       revision 1 confirmed this: 16.48 against 16.48, 18.03 against 18.03, and
+       so on. Reporting uses double-positive against the independence
+       expectation plus spatial mixing.
 
-    6. FORMAL TREATMENT TEST BY MIXED MODEL. A cell-level test comparing 5,206
-       treated cells against 187,056 untreated cells is pseudoreplication: cells
-       within an animal are not independent, and such a test answers "are these
-       two piles of cells different" rather than "does D1MT change this". A
-       linear mixed model with arm as a fixed effect, animal as a random
-       intercept and structure nested within animal uses every cell while
-       keeping the effective sample size at the level of the six animals.
-       Expect p in the 0.05 to 0.2 range even for a strong effect. That is
-       correct, not a failure.
+    6. FORMAL TREATMENT TEST BY MIXED MODEL, holding the effective sample size
+       at the six animals rather than at the cell count.
 
-    7. 3-HK DYNAMIC RANGE GATE. The script 05 preview showed treated foci higher
-       in BOTH IDO1 (115 vs 54) and 3-HK (0.243 vs 0.105). Both 3-HK values sit
-       near zero on a channel where IDO1 medians are 54 to 115. Before any
-       gradient analysis is built on 3-HK, this script establishes whether the
-       channel has usable dynamic range at all. If it does not, Q3 is not
-       answerable with this panel and we need to know now.
+    7. 3-HK DYNAMIC RANGE GATE, before any gradient analysis is built on it.
 
-PREREQUISITE
-    Rerun script 04 with FOCUS_FOLD_OVER_BACKGROUND = 6.0 first, which recovers
-    43118's second focus (1,925, 6.8x background) and gives the treated arm more
-    than one structure per animal. This script warns if it sees the old output.
+WHAT CHANGED IN REVISION 2 (and why)
+
+    1. THE POOLED PERMUTATION NULL WAS BUILT WRONG. THIS IS THE MAIN FIX.
+       Revision 1 built the pooled per-animal null as
+           pooled_null = np.nanmean(np.vstack(per_structure_nulls), axis=0)
+       that is, the mean across structures of each structure's own null median,
+       one value per permutation index. Permutations are drawn independently in
+       each structure, so that average has a variance that shrinks as
+       1 / n_structures. An animal with 44 foci therefore got a null roughly
+       six to seven times tighter than an animal with one focus, which inflates
+       z and deflates p for the untreated arm specifically, by an amount that
+       tracks the arm. That is precisely the class of error this script was
+       written to fix at the per-structure level in point 1 above, reintroduced
+       at the pooling level.
+
+       There was a second, independent mismatch stacked on it. The observed
+       pooled value is the median of all distances concatenated across
+       structures, which is cell-count weighted. The null was an unweighted mean
+       of per-structure medians. Two different functionals, so delta_um was not
+       a clean observed-minus-null.
+
+       Both are fixed the same way. The permutation loop is restructured so
+       that, for each permutation index, labels are shuffled independently
+       inside every structure, the resulting distances are CONCATENATED across
+       structures, and one median is taken. The pooled null is therefore built
+       exactly like the pooled observed. The same pass still yields each
+       structure's own null median, so table 53 is unchanged in meaning and
+       script 08 continues to read it.
+
+       For comparison, and so the size of the error is a measured quantity, the
+       old mean-of-medians null is computed alongside and written to table 54 as
+       null_median_um_meanofmedians, delta_um_meanofmedians, z_meanofmedians and
+       null_sd_meanofmedians. Expect the old null SD to be much smaller than the
+       new one, and expect that ratio to be roughly sqrt(n_structures).
+
+       ANY NUMBER PREVIOUSLY QUOTED FROM TABLE 54 IS SUPERSEDED, including the
+       pooled IDO1-negative to lymphocytes value carried in the project notes.
+
+    2. THE RAW RADIAL MIXED MODELS ARE FLAGGED AS SUPERSEDED.
+       Script 08 established that the correct outcome is radial position CENTRED
+       on each structure's own mean, because that is exactly the per-cell form
+       of the delta effect size, whereas raw radial_pos answers a different
+       question and disagreed with the effect sizes. Those rows are kept for
+       continuity but now carry superseded_by_script_08 = True and are excluded
+       from the headline print, so they cannot be quoted by accident.
+
+    3. BH CORRECTION IS APPLIED WITHIN DECLARED FAMILIES.
+       Revision 1 reported raw p-values only, so the multiple-testing position
+       had to be reconstructed from script 07. Families are radial_position,
+       nn_distance and nn_pooled_permutation, corrected separately.
+
+    4. THE PREREQUISITE CHECK IS CURRENT.
+       It warned to rerun script 04 at fold 6 to recover 43118's second focus.
+       That is done. The check now simply reports structures per animal and
+       warns only if an arm is thin.
+
+    5. STALE NUMBERS IN THE HEADER ARE CORRECTED. The cell counts quoted for the
+       pseudoreplication argument were from an earlier structure definition. On
+       the current rev4 output the treated arm holds 14,054 cells in 6
+       structures and the untreated arm 197,112 cells in 61.
 
 OUTPUTS
-    figures/  F43 .. F49
+    figures/  F43 .. F46
     tables/   50 .. 58
 
 USAGE
@@ -120,6 +157,9 @@ NN_TARGETS = ["Helper T cells", "CD4- T cells", "Tregs", "B cells",
 N_PERMUTATIONS = 300
 MAX_ANCHORS_PER_STRUCTURE = 2000
 RANDOM_SEED = 0
+# Compute the revision-1 mean-of-medians null alongside the correct one, so the
+# size of that error is measured rather than asserted. Costs nothing.
+REPORT_OLD_POOLED_NULL = True
 
 # ---- evidence tiers (REPORTED ONLY, NEVER USED TO FILTER) -------------------
 TIER_SOLID = 200
@@ -145,6 +185,7 @@ HK3_MIN_NONZERO_FRAC = 0.05          # fewer nonzero cells than this is unusable
 RUN_MIXED_MODELS = True
 MODEL_MAX_CELLS_PER_STRUCTURE = 3000   # subsample for tractability
 MODEL_MIN_CELLS_PER_ANIMAL = 20        # animals below this are dropped from a fit
+BH_ALPHA = 0.10
 
 # ---- plotting ---------------------------------------------------------------
 FONT_SIZE_BASE = 28
@@ -161,6 +202,7 @@ GRID_COLOR = "#DDDDDD"
 AXIS_COLOR = "#333333"
 TEXT_COLOR = "#000000"
 FLAG_COLOR = "#B2182B"
+OK_COLOR = "#1B7837"
 CORE_BAND = "#F0F0F0"
 
 
@@ -284,16 +326,34 @@ def tier_of(n):
     return "not_interpretable"
 
 
+def benjamini_hochberg(pvals):
+    p = np.asarray(pvals, float)
+    q = np.full(p.shape, np.nan)
+    ok = np.isfinite(p)
+    if not ok.any():
+        return q
+    idx = np.flatnonzero(ok)
+    pv = p[idx]
+    order = np.argsort(pv)
+    m = len(pv)
+    adj = pv[order] * m / np.arange(1, m + 1)
+    adj = np.minimum.accumulate(adj[::-1])[::-1]
+    out = np.empty(m)
+    out[order] = np.minimum(adj, 1.0)
+    q[idx] = out
+    return q
+
+
 def empirical_p(obs, null):
     null = np.asarray(null, float)
     null = null[np.isfinite(null)]
     if not len(null) or not np.isfinite(obs):
-        return np.nan, np.nan, np.nan
+        return np.nan, np.nan, np.nan, np.nan
     mu, sd = float(np.mean(null)), float(np.std(null, ddof=1))
     z = (obs - mu) / sd if sd > 0 else np.nan
     n_ext = int(np.sum(np.abs(null - mu) >= abs(obs - mu)))
     p = (n_ext + 1) / (len(null) + 1)
-    return float(min(p, 1.0)), z, mu
+    return float(min(p, 1.0)), z, mu, sd
 
 
 def nn_distances(anchor_xy, target_xy):
@@ -306,6 +366,11 @@ def nn_distances(anchor_xy, target_xy):
     tree = cKDTree(target_xy)
     d, _ = tree.query(anchor_xy, k=1)
     return np.asarray(d, dtype=float)
+
+
+def subsample(idx, cap, generator):
+    return (generator.choice(idx, size=cap, replace=False)
+            if len(idx) > cap else idx)
 
 
 def fit_mixed(df, outcome, label, extra_note=""):
@@ -374,8 +439,9 @@ def fit_mixed(df, outcome, label, extra_note=""):
 _tee = Tee(os.path.join(TAB_DIR, "00_distance_stats_report.txt"))
 sys.stdout = _tee
 
-banner("AKOYA CORRECTED DISTANCE STATISTICS AND FORMAL TREATMENT TESTS")
+banner("AKOYA CORRECTED DISTANCE STATISTICS AND FORMAL TREATMENT TESTS (rev 2)")
 print(f"Run time      : {datetime.now().isoformat(timespec='seconds')}")
+print(f"Input         : {IN_DIR}")
 print(f"Permutations  : {N_PERMUTATIONS}")
 print(f"Output        : {OUT_DIR}")
 if not HAVE_SCIPY:
@@ -391,6 +457,16 @@ print("    delta (observed minus null mean) is the effect size and is primary.")
 print("    z depends on the width of the null, which shrinks with structure")
 print("    size, so z is NOT comparable between arms and is reported only as a")
 print("    per-structure significance flag.")
+
+print("\nREVISION 2 HEADLINE")
+print("    The pooled per-animal null was previously an unweighted mean of")
+print("    per-structure null medians. Permutations are independent across")
+print("    structures, so that average had a variance shrinking as")
+print("    1 / n_structures, giving the 61-structure untreated arm a far")
+print("    tighter null than the 6-structure treated arm. Every pooled p and z")
+print("    in table 54 is superseded. The null is now built by concatenating")
+print("    permuted distances across structures and taking one median, exactly")
+print("    as the observed value is built.")
 
 
 # %% Cell 3 - load and prerequisite check
@@ -423,6 +499,8 @@ for p in paths:
 cond_rank = {c: i for i, c in enumerate(CONDITION_ORDER)}
 SAMPLE_ORDER = sorted(cells, key=lambda s: (cond_rank.get(cells[s]["condition"].iloc[0], 9), s))
 COND_OF = {s: cells[s]["condition"].iloc[0] for s in SAMPLE_ORDER}
+SCAN_OF = {s: (cells[s]["scan_id"].iloc[0] if "scan_id" in cells[s].columns
+               else "na") for s in SAMPLE_ORDER}
 MARKER_OF = {s: POINT_MARKERS[i % len(POINT_MARKERS)] for i, s in enumerate(SAMPLE_ORDER)}
 SHADES = {"D1MT": ["#08519C", "#3182BD", "#6BAED6"],
           "Untreated": ["#A63603", "#E6550D", "#FD8D3C"]}
@@ -433,18 +511,25 @@ for s in SAMPLE_ORDER:
     COLOR_OF[s] = pal[_seen.get(c, 0) % len(pal)]
     _seen[c] = _seen.get(c, 0) + 1
 
-sub("PREREQUISITE CHECK")
-treated_structs = {s: int(cells[s].loc[cells[s][STRUCT_COL] > 0, STRUCT_COL].nunique())
-                   for s in SAMPLE_ORDER if COND_OF[s] == "D1MT"}
-if treated_structs and max(treated_structs.values()) <= 1:
-    print("    WARNING: every treated animal has at most ONE structure.")
-    print("    Rerun script 04 with FOCUS_FOLD_OVER_BACKGROUND = 6.0 to recover")
-    print("    43118's second focus (1,925, 6.8x). Per-structure summaries in")
-    print("    the treated arm are single values with no within-animal variance.")
-    print("    Pooled per-animal results below are still valid; per-structure")
-    print("    spreads are not.")
-else:
-    print(f"    treated structures per animal: {treated_structs}")
+sub("STRUCTURE COUNTS PER ANIMAL")
+n_struct_of = {}
+for s in SAMPLE_ORDER:
+    d = cells[s]
+    n_struct_of[s] = int(d.loc[d[STRUCT_COL] > 0, STRUCT_COL].nunique())
+for c in CONDITION_ORDER:
+    mem = [s for s in SAMPLE_ORDER if COND_OF[s] == c]
+    counts = {short_label(s): n_struct_of[s] for s in mem}
+    total_cells = sum(int((cells[s][STRUCT_COL] > 0).sum()) for s in mem)
+    print(f"    {c:<12} {counts}   {total_cells:,} cells in structures")
+thin = [s for s in SAMPLE_ORDER if n_struct_of[s] < 2]
+if thin:
+    print(f"\n    NOTE: {[short_label(s) for s in thin]} have a single structure.")
+    print("    Per-structure spreads for those animals have no within-animal")
+    print("    variance. Pooled per-animal results are still valid.")
+print("\n    The structure counts differ enormously between arms. That is")
+print("    exactly why the pooled null had to be rebuilt: the revision-1")
+print("    construction made the null tighter in whichever arm had more")
+print("    structures.")
 
 
 def structure_frames():
@@ -459,10 +544,11 @@ def structure_frames():
 
 banner("3-HYDROXYKYNURENINE DYNAMIC RANGE GATE")
 
-print("    The script 05 preview showed treated foci higher in BOTH IDO1 and")
-print("    3-HK, with 3-HK medians of 0.24 and 0.10 on a channel where IDO1")
-print("    medians are 54 to 115. Before any gradient analysis is built on")
-print("    3-HK, establish whether the channel has usable range.\n")
+print("    Before any gradient analysis is built on 3-HK, establish whether the")
+print("    channel has usable range at all. Note that comparability and dynamic")
+print("    range are different questions: script 03 puts 3-HK at ICC 0.250 on")
+print("    p99 across scans, which is a comparability statement. This gate is")
+print("    about whether the channel carries signal in the first place.\n")
 
 hk_rows = []
 for s in SAMPLE_ORDER:
@@ -477,8 +563,8 @@ for s in SAMPLE_ORDER:
         if not len(v):
             continue
         hk_rows.append({
-            "sample_id": s, "condition": COND_OF[s], "scope": scope,
-            "n_cells": len(v),
+            "sample_id": s, "condition": COND_OF[s], "scan_id": SCAN_OF[s],
+            "scope": scope, "n_cells": len(v),
             "frac_zero": float(np.mean(v == 0)),
             "frac_nonzero": float(np.mean(v > 0)),
             "median": float(np.median(v)),
@@ -489,6 +575,7 @@ for s in SAMPLE_ORDER:
             "median_nonzero": float(np.median(v[v > 0])) if (v > 0).any() else np.nan,
         })
 hk = pd.DataFrame(hk_rows)
+HK3_USABLE = False
 if len(hk):
     write_csv(hk, "50_hk3_dynamic_range.csv")
     for scope in ["all_cells", "macrophages", "ido1_pos_macs"]:
@@ -517,7 +604,6 @@ if len(hk):
         print("    intensity among those, not the median over all macrophages.")
         HK3_USABLE = True
 else:
-    HK3_USABLE = False
     print("    WARNING: no 3-HK data found.")
 
 
@@ -528,11 +614,13 @@ banner("RADIAL POSITION - EFFECT SIZES")
 
 print("    delta = observed mean radial position minus the permutation null")
 print("    mean, in radial units (0 = core centre, 1 = core boundary, 2 = outer")
-print("    cuff). Negative = pulled toward the core.\n")
+print("    cuff). Negative = pulled toward the core.")
+print("    The pooled null permutes labels WITHIN each structure and then pools,")
+print("    which is the same construction the nearest-neighbour pooled null now")
+print("    uses. This part was already correct in revision 1.\n")
 
 rad_struct, rad_pool = [], []
 
-# ---- per structure ----------------------------------------------------------
 for s, k, g in structure_frames():
     r = pd.to_numeric(g["radial_pos"], errors="coerce").to_numpy()
     ok = np.isfinite(r)
@@ -547,16 +635,15 @@ for s, k, g in structure_frames():
         obs = float(r[ph == p].mean())
         null = np.array([r[rng.choice(n, size=npos, replace=False)].mean()
                          for _ in range(N_PERMUTATIONS)])
-        pval, z, mu = empirical_p(obs, null)
+        pval, z, mu, sd = empirical_p(obs, null)
         rad_struct.append({
             "sample_id": s, "condition": COND_OF[s], "structure_id": k,
             "phenotype": p, "n_cells": npos, "n_structure": n,
-            "observed_radial": obs, "null_radial": mu,
+            "observed_radial": obs, "null_radial": mu, "null_sd": sd,
             "delta_radial": obs - mu, "z": z, "p_empirical": pval,
             "tier": tier_of(npos),
         })
 
-# ---- pooled per animal ------------------------------------------------------
 for s in SAMPLE_ORDER:
     d = cells[s]
     sel = d.loc[(d[STRUCT_COL] > 0) & np.isfinite(
@@ -566,6 +653,8 @@ for s in SAMPLE_ORDER:
     r = pd.to_numeric(sel["radial_pos"], errors="coerce").to_numpy()
     ph = sel["pheno"].to_numpy()
     struct = sel[STRUCT_COL].to_numpy()
+    uniq = np.unique(struct)
+    struct_idx = {kk: np.flatnonzero(struct == kk) for kk in uniq}
     n = len(r)
     for p in PHENOTYPE_ORDER:
         m = ph == p
@@ -573,22 +662,21 @@ for s in SAMPLE_ORDER:
         if npos == 0:
             continue
         obs = float(r[m].mean())
-        # permute labels WITHIN each structure, then pool, so structure
-        # membership is preserved in the null
+        want = {kk: int(m[struct_idx[kk]].sum()) for kk in uniq}
         null = np.empty(N_PERMUTATIONS)
         for it in range(N_PERMUTATIONS):
             fake = np.zeros(n, dtype=bool)
-            for kk in np.unique(struct):
-                idx = np.flatnonzero(struct == kk)
-                want = int((m & (struct == kk)).sum())
-                if want:
-                    fake[rng.choice(idx, size=want, replace=False)] = True
+            for kk in uniq:
+                w = want[kk]
+                if w:
+                    fake[rng.choice(struct_idx[kk], size=w, replace=False)] = True
             null[it] = r[fake].mean()
-        pval, z, mu = empirical_p(obs, null)
+        pval, z, mu, sd = empirical_p(obs, null)
         rad_pool.append({
             "sample_id": s, "animal_id": short_label(s), "condition": COND_OF[s],
-            "phenotype": p, "n_cells": npos, "n_pooled": n,
-            "observed_radial": obs, "null_radial": mu,
+            "scan_id": SCAN_OF[s], "phenotype": p,
+            "n_cells": npos, "n_pooled": n, "n_structures": len(uniq),
+            "observed_radial": obs, "null_radial": mu, "null_sd": sd,
             "delta_radial": obs - mu, "z": z, "p_empirical": pval,
             "tier": tier_of(npos),
         })
@@ -599,6 +687,7 @@ rad_p = pd.DataFrame(rad_pool)
 if len(rad_s):
     write_csv(rad_s, "51_radial_per_structure.csv")
 if len(rad_p):
+    rad_p["q_value"] = benjamini_hochberg(rad_p["p_empirical"].to_numpy())
     write_csv(rad_p, "52_radial_pooled_per_animal.csv")
 
     sub("Pooled per-animal delta radial position (NO tier filtering)")
@@ -619,14 +708,20 @@ if len(rad_p):
         print(row)
 
 
-# %% Cell 6 - nearest-neighbour distances, exact, per structure and pooled
+# %% Cell 6 - nearest-neighbour distances, exact, correctly pooled
 # =============================================================================
 
-banner("NEAREST-NEIGHBOUR DISTANCES - EXACT, NO CENSORING")
+banner("NEAREST-NEIGHBOUR DISTANCES - EXACT, NO CENSORING, CORRECTLY POOLED")
 
 print("    KD-tree built on target cells only; every anchor gets its exact")
 print("    nearest-target distance. Null: reassign anchor and target labels")
-print("    within the structure, preserving counts and coordinates.\n")
+print("    within the structure, preserving counts and coordinates.")
+print("\n    THE POOLED NULL. For each permutation index, labels are shuffled")
+print("    independently inside EVERY structure of that animal, the resulting")
+print("    distances are concatenated across structures, and ONE median is")
+print("    taken. The pooled null is therefore built exactly like the pooled")
+print("    observed value: same functional, same cell weighting, and its width")
+print("    does not depend on how many structures the animal happens to have.\n")
 
 nn_struct, nn_pool, nn_cells_rows = [], [], []
 
@@ -635,89 +730,121 @@ for s in SAMPLE_ORDER:
     sel = d.loc[d[STRUCT_COL] > 0]
     if not len(sel):
         continue
-    per_pair_obs = {}
-    per_pair_null = {}
 
+    # per-structure arrays, built once
+    structs = {}
     for k, g in sel.groupby(STRUCT_COL):
         xy = g[["x", "y"]].to_numpy(float)
-        ph = g["pheno"].to_numpy()
-        n = len(xy)
-        if n < 10:
+        if len(xy) < 10:
             continue
-        for anchor in NN_ANCHORS:
-            a_idx = np.flatnonzero(ph == anchor)
-            n_a = len(a_idx)
-            if n_a == 0:
+        structs[int(k)] = (xy, g["pheno"].to_numpy())
+
+    for anchor in NN_ANCHORS:
+        for target in NN_TARGETS:
+            if target == anchor:
                 continue
-            a_use = (rng.choice(a_idx, size=MAX_ANCHORS_PER_STRUCTURE,
-                                replace=False)
-                     if n_a > MAX_ANCHORS_PER_STRUCTURE else a_idx)
-            for target in NN_TARGETS:
-                if target == anchor:
-                    continue
+
+            # assemble the structures that carry both members
+            items = []
+            for k, (xy, ph) in structs.items():
+                a_idx = np.flatnonzero(ph == anchor)
                 t_idx = np.flatnonzero(ph == target)
-                n_t = len(t_idx)
-                if n_t == 0:
+                if not len(a_idx) or not len(t_idx):
                     continue
-                obs_v = nn_distances(xy[a_use], xy[t_idx])
-                obs = float(np.median(obs_v)) if len(obs_v) else np.nan
+                a_use = subsample(a_idx, MAX_ANCHORS_PER_STRUCTURE, rng)
+                items.append({"k": k, "xy": xy, "n": len(xy),
+                              "n_a": len(a_idx), "n_t": len(t_idx),
+                              "a_use": a_use, "t_idx": t_idx})
+            if not items:
+                continue
 
-                null = np.empty(N_PERMUTATIONS)
-                for it in range(N_PERMUTATIONS):
+            # ---- observed ------------------------------------------------
+            for item in items:
+                item["obs_v"] = nn_distances(item["xy"][item["a_use"]],
+                                             item["xy"][item["t_idx"]])
+            pooled_obs_v = np.concatenate([it_["obs_v"] for it_ in items
+                                           if len(it_["obs_v"])])
+            pooled_obs = float(np.median(pooled_obs_v)) if len(pooled_obs_v) else np.nan
+
+            # ---- one permutation pass, giving both nulls -----------------
+            null_struct = {it_["k"]: np.full(N_PERMUTATIONS, np.nan)
+                           for it_ in items}
+            pooled_null = np.full(N_PERMUTATIONS, np.nan)
+            for it in range(N_PERMUTATIONS):
+                bucket = []
+                for item in items:
+                    n = item["n"]
                     perm = rng.permutation(n)
-                    fa = perm[:n_a]
-                    ft = perm[n_a:n_a + n_t]
-                    fa_use = (rng.choice(fa, size=MAX_ANCHORS_PER_STRUCTURE,
-                                         replace=False)
-                              if len(fa) > MAX_ANCHORS_PER_STRUCTURE else fa)
-                    v = nn_distances(xy[fa_use], xy[ft])
-                    null[it] = np.median(v) if len(v) else np.nan
-                pval, z, mu = empirical_p(obs, null)
+                    fa = perm[:item["n_a"]]
+                    ft = perm[item["n_a"]:item["n_a"] + item["n_t"]]
+                    fa_use = subsample(fa, MAX_ANCHORS_PER_STRUCTURE, rng)
+                    v = nn_distances(item["xy"][fa_use], item["xy"][ft])
+                    if len(v):
+                        null_struct[item["k"]][it] = float(np.median(v))
+                        bucket.append(v)
+                if bucket:
+                    pooled_null[it] = float(np.median(np.concatenate(bucket)))
 
+            # ---- per-structure records -----------------------------------
+            for item in items:
+                k = item["k"]
+                obs = (float(np.median(item["obs_v"]))
+                       if len(item["obs_v"]) else np.nan)
+                pval, z, mu, sd = empirical_p(obs, null_struct[k])
                 nn_struct.append({
-                    "sample_id": s, "condition": COND_OF[s], "structure_id": int(k),
+                    "sample_id": s, "condition": COND_OF[s],
+                    "scan_id": SCAN_OF[s], "structure_id": k,
                     "anchor": anchor, "target": target,
-                    "n_anchor": n_a, "n_target": n_t, "n_structure": n,
+                    "n_anchor": item["n_a"], "n_target": item["n_t"],
+                    "n_structure": item["n"],
                     "observed_median_um": obs, "null_median_um": mu,
+                    "null_sd_um": sd,
                     "delta_um": obs - mu if np.isfinite(mu) else np.nan,
                     "z": z, "p_empirical": pval,
-                    "tier": tier_of(min(n_a, n_t)),
+                    "tier": tier_of(min(item["n_a"], item["n_t"])),
                 })
 
-                key = (anchor, target)
-                per_pair_obs.setdefault(key, []).append(obs_v)
-                per_pair_null.setdefault(key, []).append(null)
-
-                # per-cell rows for the mixed model
-                take = obs_v
+                take = item["obs_v"]
                 if len(take) > MODEL_MAX_CELLS_PER_STRUCTURE:
                     take = rng.choice(take, size=MODEL_MAX_CELLS_PER_STRUCTURE,
                                       replace=False)
-                nn_cells_rows.append(pd.DataFrame({
-                    "sample_id": s, "condition": COND_OF[s],
-                    STRUCT_COL: int(k), "anchor": anchor, "target": target,
-                    "nn_distance_um": take,
-                }))
+                if len(take):
+                    nn_cells_rows.append(pd.DataFrame({
+                        "sample_id": s, "condition": COND_OF[s],
+                        STRUCT_COL: k, "anchor": anchor, "target": target,
+                        "nn_distance_um": take,
+                    }))
 
-    # pooled per animal: pool per-cell distances across structures
-    for key, arrs in per_pair_obs.items():
-        allv = np.concatenate([a for a in arrs if len(a)])
-        if not len(allv):
-            continue
-        nulls = np.vstack(per_pair_null[key])          # (n_struct, n_perm)
-        pooled_null = np.nanmean(nulls, axis=0)        # per permutation
-        obs = float(np.median(allv))
-        pval, z, mu = empirical_p(obs, pooled_null)
-        nn_pool.append({
-            "sample_id": s, "animal_id": short_label(s), "condition": COND_OF[s],
-            "anchor": key[0], "target": key[1],
-            "n_anchor_cells": int(len(allv)),
-            "n_structures": int(len(arrs)),
-            "observed_median_um": obs, "null_median_um": mu,
-            "delta_um": obs - mu if np.isfinite(mu) else np.nan,
-            "z": z, "p_empirical": pval,
-            "tier": tier_of(len(allv)),
-        })
+            # ---- pooled record -------------------------------------------
+            pval, z, mu, sd = empirical_p(pooled_obs, pooled_null)
+            rec = {
+                "sample_id": s, "animal_id": short_label(s),
+                "condition": COND_OF[s], "scan_id": SCAN_OF[s],
+                "anchor": anchor, "target": target,
+                "n_anchor_cells": int(len(pooled_obs_v)),
+                "n_structures": int(len(items)),
+                "observed_median_um": pooled_obs,
+                "null_median_um": mu, "null_sd_um": sd,
+                "delta_um": pooled_obs - mu if np.isfinite(mu) else np.nan,
+                "z": z, "p_empirical": pval,
+                "tier": tier_of(len(pooled_obs_v)),
+            }
+            if REPORT_OLD_POOLED_NULL:
+                old_null = np.nanmean(
+                    np.vstack([null_struct[it_["k"]] for it_ in items]), axis=0)
+                p_o, z_o, mu_o, sd_o = empirical_p(pooled_obs, old_null)
+                rec.update({
+                    "null_median_um_meanofmedians": mu_o,
+                    "null_sd_meanofmedians": sd_o,
+                    "delta_um_meanofmedians": (pooled_obs - mu_o
+                                               if np.isfinite(mu_o) else np.nan),
+                    "z_meanofmedians": z_o,
+                    "p_meanofmedians": p_o,
+                    "null_sd_ratio_old_over_new": (sd_o / sd if (sd and sd > 0)
+                                                   else np.nan),
+                })
+            nn_pool.append(rec)
+
     print(f"    {s} done")
     gc.collect()
 
@@ -729,7 +856,9 @@ nn_cells = (pd.concat(nn_cells_rows, ignore_index=True)
 if len(nn_s):
     write_csv(nn_s, "53_nn_per_structure.csv")
 if len(nn_p):
+    nn_p["q_value"] = benjamini_hochberg(nn_p["p_empirical"].to_numpy())
     write_csv(nn_p, "54_nn_pooled_per_animal.csv")
+
     sub("Pooled per-animal nearest-neighbour distances (NO tier filtering)")
     for anchor in NN_ANCHORS:
         print(f"\n    anchor: {anchor}")
@@ -751,6 +880,33 @@ if len(nn_p):
             print(row)
         print("      (observed median um / delta vs null)")
 
+    if REPORT_OLD_POOLED_NULL and "null_sd_ratio_old_over_new" in nn_p.columns:
+        sub("HOW BIG WAS THE POOLED NULL BUG?")
+        print("    The old mean-of-medians null averaged independent")
+        print("    permutations across structures, so its spread shrank as")
+        print("    1/sqrt(n_structures). A ratio well below 1 means the old null")
+        print("    was too tight and the old z and p were inflated.\n")
+        print(f"    {'section':<12}{'structures':>12}{'old sd/new sd':>16}"
+              f"{'expected':>11}{'median |z| old':>16}{'median |z| new':>16}")
+        print("    " + "-" * 83)
+        for s in SAMPLE_ORDER:
+            g = nn_p.loc[nn_p["sample_id"] == s]
+            if not len(g):
+                continue
+            ns = float(g["n_structures"].median())
+            ratio = float(g["null_sd_ratio_old_over_new"].median())
+            print(f"    {s:<12}{ns:>12.0f}{ratio:>16.3f}"
+                  f"{1/np.sqrt(ns):>11.3f}"
+                  f"{float(g['z_meanofmedians'].abs().median()):>16.2f}"
+                  f"{float(g['z'].abs().median()):>16.2f}")
+        n_flip = int(((nn_p["p_meanofmedians"] < 0.05)
+                      & (nn_p["p_empirical"] >= 0.05)).sum())
+        print(f"\n    {n_flip} pooled comparison(s) were significant at p < 0.05")
+        print(f"    under the old null and are not under the corrected one.")
+        print("    Any pooled number previously quoted from table 54 is")
+        print("    superseded, including the IDO1-negative to lymphocytes value")
+        print("    carried in the project notes.")
+
 
 # %% Cell 7 - polarisation, corrected
 # =============================================================================
@@ -759,7 +915,8 @@ banner("iNOS vs ARGINASE-1 - CORRECTED REPORTING")
 
 print("    pct_inos_only and pct_arg1_only are omitted: a within-section")
 print("    percentile makes the two sets exactly equal in size, so those")
-print("    columns are identical by construction and carry no information.")
+print("    columns are identical by construction. Script 05 revision 1")
+print("    confirmed it empirically, 16.48 against 16.48 and so on.")
 print("    Reported instead: double-positive against the independence")
 print("    expectation, and spatial mixing with NO tier filtering.\n")
 
@@ -778,8 +935,8 @@ for s in SAMPLE_ORDER:
         obs_dbl = float((hi_i & hi_a).mean())
         exp_dbl = p_i * p_a
         pol_rows.append({
-            "sample_id": s, "condition": COND_OF[s], "percentile": pct,
-            "n_macrophages": len(mac),
+            "sample_id": s, "condition": COND_OF[s], "scan_id": SCAN_OF[s],
+            "percentile": pct, "n_macrophages": len(mac),
             "pct_double_positive": 100.0 * obs_dbl,
             "pct_expected_if_independent": 100.0 * exp_dbl,
             "double_positive_ratio": obs_dbl / exp_dbl if exp_dbl > 0 else np.nan,
@@ -816,11 +973,11 @@ for s in SAMPLE_ORDER:
             fi = np.zeros(n, bool); fi[perm[:n_i]] = True
             fa = np.zeros(n, bool); fa[perm[n_i:n_i + n_a]] = True
             null[it2] = mixing(fi, fa)
-        pval, z, mu = empirical_p(obs, null)
+        pval, z, mu, sd = empirical_p(obs, null)
         mix_rows.append({
             "sample_id": s, "condition": COND_OF[s], "structure_id": int(k),
             "n_macrophages": n, "n_inos_only": n_i, "n_arg1_only": n_a,
-            "observed_mixing": obs, "null_mixing": mu,
+            "observed_mixing": obs, "null_mixing": mu, "null_sd": sd,
             "delta_mixing": obs - mu if np.isfinite(mu) else np.nan,
             "z": z, "p_empirical": pval, "tier": tier_of(min(n_i, n_a)),
         })
@@ -837,6 +994,11 @@ if len(pol):
          "pct_double_negative"]].to_string(index=False))
     print("\n    A ratio above 1 means iNOS and Arginase-1 are CO-EXPRESSED more")
     print("    than chance, which runs against a strict M1/M2 dichotomy.")
+    print("    SPILLOVER CAVEAT: script 08's control pairs showed that apparent")
+    print("    co-expression of any two markers rises with cell density, and")
+    print("    CD3e with CD20 separated the arms more strongly than iNOS with")
+    print("    Arginase-1 did. Do not read this ratio as biology without that")
+    print("    control alongside.")
 if len(mix):
     write_csv(mix, "56_inos_arg1_mixing.csv")
     sub("Spatial mixing, all structures, no tier filtering")
@@ -860,16 +1022,20 @@ if len(mix):
 banner("FORMAL TREATMENT TESTS - LINEAR MIXED MODELS")
 
 print("    Cells within an animal are not independent. A plain cell-level test")
-print("    across 5,206 treated and 187,056 untreated cells is")
+print("    across 14,054 treated and 197,112 untreated cells in structures is")
 print("    pseudoreplication and would return an implausibly small p-value for")
 print("    an effect of no consequence. These models use every cell but hold")
 print("    the effective sample size at the level of the six animals.")
 print("    With three animals per arm, p in the 0.05 to 0.2 range is the")
 print("    expected result for a real effect, not a failure.\n")
+print("    RAW RADIAL MODELS ARE SUPERSEDED. Script 08 showed the correct")
+print("    outcome is radial position CENTRED on each structure's own mean,")
+print("    because that is the per-cell form of the delta effect size reported")
+print("    in Cell 5. The raw-radial rows below are kept for continuity, are")
+print("    flagged superseded_by_script_08, and must not be quoted.\n")
 
 model_rows = []
 if RUN_MIXED_MODELS and HAVE_SM:
-    # radial position per phenotype
     for p in KEY_PHENOTYPES:
         frames = []
         for s in SAMPLE_ORDER:
@@ -888,20 +1054,23 @@ if RUN_MIXED_MODELS and HAVE_SM:
         if not frames:
             continue
         dd = pd.concat(frames, ignore_index=True)
-        r = fit_mixed(dd, "radial_pos", f"radial position: {p}")
+        r = fit_mixed(dd, "radial_pos", f"radial position: {p}",
+                      extra_note="raw radial_pos, superseded by script 08")
         if r:
             r["phenotype"] = p
+            r["family"] = "radial_position"
+            r["superseded_by_script_08"] = True
             model_rows.append(r)
-            print(f"    radial {p:<26} coef={r['coef_D1MT_vs_ref']:>+7.3f}  "
-                  f"p={r['p_value']:.4f}  cells={r['n_cells']:,}  "
-                  f"[{r['random_effects']}]")
 
-    # nearest-neighbour distance per pair
     if len(nn_cells):
         for (a, t), g in nn_cells.groupby(["anchor", "target"]):
-            r = fit_mixed(g, "nn_distance_um", f"nn distance: {a} -> {t}")
+            r = fit_mixed(g, "nn_distance_um", f"nn distance: {a} -> {t}",
+                          extra_note="raw microns; bounded by focus size, see "
+                                     "script 07")
             if r:
                 r["anchor"], r["target"] = a, t
+                r["family"] = "nn_distance"
+                r["superseded_by_script_08"] = False
                 model_rows.append(r)
                 print(f"    nn {a[:18]:<20} -> {t:<16} "
                       f"coef={r['coef_D1MT_vs_ref']:>+7.2f} um  "
@@ -913,13 +1082,28 @@ else:
 
 models = pd.DataFrame(model_rows)
 if len(models):
+    models["q_value"] = np.nan
+    for fam, g in models.groupby("family"):
+        models.loc[g.index, "q_value"] = benjamini_hochberg(
+            g["p_value"].to_numpy())
+    models["sig_q"] = models["q_value"] < BH_ALPHA
     write_csv(models, "57_mixed_model_results.csv")
+
+    sub("Superseded raw-radial models (printed for the record only)")
+    for _, r in models.loc[models["superseded_by_script_08"]].iterrows():
+        print(f"    {r['analysis'][:44]:<46} coef={r['coef_D1MT_vs_ref']:>+7.3f}  "
+              f"p={r['p_value']:.4f}  q={r['q_value']:.4f}   DO NOT QUOTE")
+
+    sub("Multiple testing position")
+    print(f"    {int(models['sig_q'].sum())} of {len(models)} models survive BH "
+          f"at q < {BH_ALPHA} within their declared family.")
+
     sub("Interpretation")
     print("    coef is the D1MT effect relative to Untreated, in the units of")
-    print("    the outcome (radial units, or microns). A negative radial coef")
-    print("    means that population sits closer to the core in treated foci.")
-    print("    A negative distance coef means the pair sits closer together in")
-    print("    treated foci.")
+    print("    the outcome (radial units, or microns). A negative distance coef")
+    print("    means the pair sits closer together in treated foci, but raw")
+    print("    microns are bounded by focus size, which is why script 07")
+    print("    re-tests distance three independent ways.")
 
 
 # %% Cell 9 - figures
@@ -927,7 +1111,6 @@ if len(models):
 
 banner("FIGURES")
 
-# ---- F43 pooled radial delta ------------------------------------------------
 if len(rad_p):
     fig, axes = plt.subplots(1, 2, figsize=(32, 14),
                              gridspec_kw={"width_ratios": [1.35, 1.0]})
@@ -987,7 +1170,6 @@ if len(rad_p):
                  y=1.04, fontsize=FONT_SIZE_TITLE - 6)
     save_fig(fig, "F43_radial_delta_pooled")
 
-# ---- F44 pooled nn distances ------------------------------------------------
 if len(nn_p):
     pairs = [(a, t) for a in NN_ANCHORS for t in NN_TARGETS if a != t]
     ncol = 5
@@ -1027,41 +1209,87 @@ if len(nn_p):
                loc="lower center", ncol=2, frameon=False,
                fontsize=FONT_SIZE_LEGEND - 8, bbox_to_anchor=(0.5, -0.03))
     fig.suptitle("Nearest-neighbour distances pooled per animal, exact and "
-                 "uncensored\nOpen circles are the within-structure "
-                 "permutation null", y=1.02, fontsize=FONT_SIZE_TITLE - 6)
+                 "uncensored\nNull built by concatenating permuted distances "
+                 "across structures, then taking one median",
+                 y=1.02, fontsize=FONT_SIZE_TITLE - 8)
     save_fig(fig, "F44_nn_pooled_distances")
 
-# ---- F45 mixed model forest -------------------------------------------------
-if len(models):
-    m = models.copy()
-    m["label"] = m["analysis"]
-    m = m.sort_values("p_value")
-    fig, ax = plt.subplots(figsize=(22, max(12, 0.75 * len(m))))
-    yy = np.arange(len(m))
-    lo = m["coef_D1MT_vs_ref"] - 1.96 * m["std_err"]
-    hi = m["coef_D1MT_vs_ref"] + 1.96 * m["std_err"]
-    for i, (_, r) in enumerate(m.iterrows()):
-        sig = r["p_value"] < 0.05
-        ax.plot([lo.iloc[i], hi.iloc[i]], [i, i],
-                color=FLAG_COLOR if sig else "#666666", linewidth=5, zorder=2)
-        ax.scatter([r["coef_D1MT_vs_ref"]], [i], s=420,
-                   color=FLAG_COLOR if sig else "#666666",
-                   edgecolor="#FFFFFF", linewidth=2, zorder=3)
-        ax.text(hi.iloc[i], i, f"  p={r['p_value']:.3f}", va="center",
-                fontsize=FONT_SIZE_ANNOT - 10)
-    ax.axvline(0, color="#000000", linewidth=3.5)
-    ax.set_yticks(yy)
-    ax.set_yticklabels(m["label"], fontsize=FONT_SIZE_TICK - 12)
-    ax.invert_yaxis()
-    ax.set_xlabel("D1MT effect vs Untreated (95% CI)")
-    ax.set_title("Mixed model treatment effects\n"
-                 "animal as random intercept, structure nested within animal",
-                 fontsize=FONT_SIZE_TITLE - 8)
-    ax.xaxis.grid(True, color=GRID_COLOR, linewidth=1.5); ax.set_axisbelow(True)
-    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
-    save_fig(fig, "F45_mixed_model_forest")
+# ---- F44b the pooled null bug, made visible ---------------------------------
+if len(nn_p) and REPORT_OLD_POOLED_NULL and "null_sd_meanofmedians" in nn_p.columns:
+    fig, axes = plt.subplots(1, 2, figsize=(30, 13))
+    ax = axes[0]
+    for s in SAMPLE_ORDER:
+        g = nn_p.loc[nn_p["sample_id"] == s]
+        if not len(g):
+            continue
+        ax.scatter(g["n_structures"], g["null_sd_ratio_old_over_new"], s=320,
+                   color=COLOR_OF[s], marker=MARKER_OF[s], edgecolor="#FFFFFF",
+                   linewidth=2, zorder=3)
+    ns = np.linspace(1, max(2, float(nn_p["n_structures"].max())), 100)
+    ax.plot(ns, 1 / np.sqrt(ns), color="#000000", linestyle="--", linewidth=3)
+    ax.set_xscale("log")
+    ax.set_xlabel("structures pooled in that animal")
+    ax.set_ylabel("old null SD / corrected null SD")
+    ax.set_title("The old null shrank as 1/sqrt(structures)\n"
+                 "dashed line is that prediction",
+                 fontsize=FONT_SIZE_TITLE - 14)
+    style_axes(ax)
+    ax.legend(handles=[Line2D([0], [0], color=COLOR_OF[s], marker=MARKER_OF[s],
+                              markersize=16, linestyle="none",
+                              label=f"{short_label(s)} ({COND_OF[s]})")
+                       for s in SAMPLE_ORDER],
+              frameon=False, fontsize=FONT_SIZE_LEGEND - 16, loc="best")
 
-# ---- F46 3-HK dynamic range -------------------------------------------------
+    ax = axes[1]
+    for s in SAMPLE_ORDER:
+        g = nn_p.loc[nn_p["sample_id"] == s]
+        if not len(g):
+            continue
+        ax.scatter(g["z_meanofmedians"].abs(), g["z"].abs(), s=320,
+                   color=COLOR_OF[s], marker=MARKER_OF[s], edgecolor="#FFFFFF",
+                   linewidth=2, zorder=3)
+    lim = float(np.nanmax([nn_p["z"].abs().max(),
+                           nn_p["z_meanofmedians"].abs().max(), 1.0]))
+    ax.plot([0, lim], [0, lim], color="#000000", linestyle="--", linewidth=3)
+    ax.set_xlabel("|z| under the old mean-of-medians null")
+    ax.set_ylabel("|z| under the corrected pooled null")
+    ax.set_title("Points below the line were overstated",
+                 fontsize=FONT_SIZE_TITLE - 14)
+    style_axes(ax)
+    fig.suptitle("How much the pooled null construction mattered", y=1.03,
+                 fontsize=FONT_SIZE_TITLE - 6)
+    save_fig(fig, "F44b_pooled_null_correction")
+
+if len(models):
+    m = models.loc[~models["superseded_by_script_08"]].copy()
+    if len(m):
+        m["label"] = m["analysis"]
+        m = m.sort_values("p_value")
+        fig, ax = plt.subplots(figsize=(22, max(12, 0.75 * len(m))))
+        yy = np.arange(len(m))
+        lo = m["coef_D1MT_vs_ref"] - 1.96 * m["std_err"]
+        hi = m["coef_D1MT_vs_ref"] + 1.96 * m["std_err"]
+        for i, (_, r) in enumerate(m.iterrows()):
+            sig = bool(r["sig_q"])
+            ax.plot([lo.iloc[i], hi.iloc[i]], [i, i],
+                    color=FLAG_COLOR if sig else "#666666", linewidth=5, zorder=2)
+            ax.scatter([r["coef_D1MT_vs_ref"]], [i], s=420,
+                       color=FLAG_COLOR if sig else "#666666",
+                       edgecolor="#FFFFFF", linewidth=2, zorder=3)
+            ax.text(hi.iloc[i], i, f"  p={r['p_value']:.3f} q={r['q_value']:.3f}",
+                    va="center", fontsize=FONT_SIZE_ANNOT - 12)
+        ax.axvline(0, color="#000000", linewidth=3.5)
+        ax.set_yticks(yy)
+        ax.set_yticklabels(m["label"], fontsize=FONT_SIZE_TICK - 12)
+        ax.invert_yaxis()
+        ax.set_xlabel("D1MT effect vs Untreated (95% CI)")
+        ax.set_title("Mixed model treatment effects, superseded rows excluded\n"
+                     "animal as random intercept, structure nested within animal",
+                     fontsize=FONT_SIZE_TITLE - 10)
+        ax.xaxis.grid(True, color=GRID_COLOR, linewidth=1.5); ax.set_axisbelow(True)
+        ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+        save_fig(fig, "F45_mixed_model_forest")
+
 if len(hk):
     fig, axes = plt.subplots(1, 2, figsize=(30, 13))
     ax = axes[0]
@@ -1164,23 +1392,31 @@ print(f"Mixed models fitted              : {len(models)}")
 print(f"3-HK usable for Q3               : {HK3_USABLE}")
 
 sub("Read in this order")
-print("  1. F46 / table 50 : is 3-HK usable? Decides whether Q3 survives.")
-print("  2. F43 / table 52 : radial position as delta. Q1 architecture.")
-print("  3. F44 / table 54 : uncensored distances pooled per animal. Q1, Q4.")
-print("  4. F45 / table 57 : mixed model treatment effects. The formal test.")
-print("  5. Table 58       : per-animal consistency and arm differences.")
+print("  1. F44b / table 54 : how much the pooled null construction mattered.")
+print("     Read this before anything else in this script, because it decides")
+print("     which of the old pooled numbers can still be used.")
+print("  2. F46 / table 50  : is 3-HK usable? Decides whether Q3 survives.")
+print("  3. F43 / table 52  : radial position as delta. Q1 architecture.")
+print("  4. F44 / table 54  : uncensored distances pooled per animal. Q1, Q4.")
+print("  5. F45 / table 57  : mixed model treatment effects, superseded rows")
+print("     excluded from the figure.")
+print("  6. Table 58        : per-animal consistency and arm differences.")
 
 sub("What to tell Deepak about the statistics")
 print("  Three levels, all reported:")
-print("    - Within-animal permutation: high confidence, well powered, valid.")
-print("      'In 43109, IDO1+ macrophages sit closer to CD4 T cells than that")
-print("      lesion's own architecture predicts, p = 0.005, on 22,052 cells.'")
+print("    - Within-structure permutation: high confidence, well powered, valid.")
+print("      The null contains that structure's own size, shape and density.")
 print("    - Per-animal effect sizes with k of 3 consistency: carries the")
 print("      treatment claim honestly.")
 print("    - Mixed model: the formal treatment test. Bounded by three animals")
 print("      per arm. A p of 0.08 here is a real result, and any claim of")
 print("      p < 0.001 for a treatment effect from three animals per group is")
 print("      misusing the cell count.")
+
+sub("Superseded")
+print("  Every pooled p and z written by revision 1 of this script.")
+print("  Every raw-radial mixed model row, superseded by script 08's centred")
+print("  outcome.")
 
 banner("DONE")
 sys.stdout = _tee.terminal
