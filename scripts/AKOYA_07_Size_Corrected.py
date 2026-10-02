@@ -4,7 +4,7 @@
 AKOYA Phenocycler - SIZE-CORRECTED DISTANCE MODELS AND POLARISATION
 Rhesus Mtb + SIV, D1MT-treated (G3) vs untreated (G4), necropsy lung sections
 
-Script 07 of the AKOYA analysis series. REVISION 3.4.
+Script 07 of the AKOYA analysis series. REVISION 3.5.
 
 WHY THIS SCRIPT EXISTS
     Script 06 measures nearest-neighbour distances in microns. A distance
@@ -266,16 +266,23 @@ WHAT CHANGED IN REVISION 3.3 (after reading the 3.2 output)
        44-point spread with the arms fully overlapping. It is not a stable
        reference point, it is a second noisy measurement.
 
-       Measured against the IDO1-positive term alone, the contrast helps a
-       lot twice, is a wash twice and is worse once:
-           CD4- T cells 15 um     1.5  ->  12.8
-           plasma cells 30 um     5.2  ->  16.9
-           plasma cells 50 um    18.2  ->  19.2
-           Helper T cells 50 um   9.1  ->   9.2
-           Tregs 50 um           26.5  ->  20.6
-       So it is a useful second view, not a confound-cancelling estimator, and
-       it must earn its place on every row rather than by construction. The
-       IDO1-positive-alone margin is now printed beside every contrast margin.
+       Measured against the IDO1-positive term alone, the contrast helps on
+       some rows and not others. So it is a useful second view, not a
+       confound-cancelling estimator, and it must earn its place on every row
+       rather than by construction. The IDO1-positive-alone margin is now
+       printed beside every contrast margin.
+
+       REVISION 3.5 NOTE ON THE NUMBERS THAT USED TO SIT HERE. This block
+       listed five margin pairs from the revision 3.2 run, and 3.4 left them in
+       place while changing both the run and the rules. They were stale twice
+       over: the values had moved, and three of the five rows (Helper T cells
+       twice, Tregs once) are NOT REPORTABLE under the 3.4 target-count gate,
+       so the header was advertising margins for rows the script now forbids
+       quoting. That is the stale-number defect 3.4 item A fixed in the banner,
+       reappearing in the history section. They are removed rather than
+       refreshed, because Cell 8 prints gap, worst LOO, IDO1+ alone, n_anch,
+       n_tgt and the reportability verdict for every row on the input actually
+       loaded, and that is the only place these should be read from.
 
        It also does not carry to the confirmatory outcome. On distance delta
        the contrast separates only for Helper T cells, at 4.6 um, and Helper T
@@ -356,6 +363,10 @@ WHAT CHANGED IN REVISION 3.4 (the lock-down pass, before script 08)
        needs the distribution shape rather than another summary.
 
     D. THE 3.3 STABILITY FIX IS NOW VERIFIED INSIDE THE RUN, NOT ASSERTED.
+       [THIS ITEM IS WRONG. SEE REVISION 3.5 ITEM A. The first of the two
+       checks below cannot fail, so it verified nothing, and the second needs
+       two runs and so verified nothing inside one. Kept as written because the
+       3.4 log and the 3.4 findings summary both rest on it.]
        Two checks. Every anchor subsample is re-derived from its identity key
        and compared against the one used, which is the invariant 3.3
        introduced. And a fingerprint is taken over every OBSERVED quantity,
@@ -368,6 +379,71 @@ WHAT CHANGED IN REVISION 3.4 (the lock-down pass, before script 08)
        means a stream is still crossed and the earlier run cannot be trusted.
        Record the fingerprint beside any number quoted from this script.
 
+WHAT CHANGED IN REVISION 3.5 (the audit of the lock-down pass)
+
+    No new analysis and no new outcome. Revision 3.4 set out to close the gap
+    between what this script computes and what it is allowed to say, and it
+    left four gaps of its own. Nothing here moves a number on the 3.4 input.
+
+    A. THE 3.4 REPRODUCIBILITY 'PASS' IS WITHDRAWN. IT COULD NOT FAIL.
+       The check derived the anchor subsample with subsample_rng(s, k, anchor),
+       then re-derived it by calling the SAME pure function with the SAME
+       arguments, and compared. Two calls to a deterministic function of its
+       arguments are equal by construction. The check confirmed that
+       subsample_rng is deterministic, which nothing ever disputed, and it was
+       structurally incapable of detecting the crossed stream it was written to
+       detect. The log printed PASS under the heading "These two checks verify
+       that rather than asserting it", and the 3.4 findings summary recorded
+       the stability fix as verified on the strength of it. It was not.
+
+       It is not replaced with a cleverer in-run check. The property at issue
+       is invariance of the observed values to the STATE of the running null
+       streams, and the only way to test that from inside a run is to disturb
+       those streams, which would change the nulls the same run reports. A
+       check that alters the numbers it checks is worse than no check. The
+       block now reports how many subsamples were capped at all and states
+       plainly that verification lives across runs.
+
+    B. THE CROSS-RUN COMPARISON IS NOW DONE BY THE SCRIPT, NOT BY MEMORY.
+       3.4 asked the reader to change N_PROXIMITY_PERMUTATIONS, rerun, and
+       compare a hex string by eye. That is why the fix was still outstanding
+       after 3.4: verification needed two runs and the script had no memory
+       between them. Every run now appends its fingerprint to table 69 with the
+       parameters that are ENTITLED to move an observed value, and the verdict
+       compares this run against prior runs that differ ONLY in a null-precision
+       parameter. Three outcomes, all printed: VERIFIED, FAIL with the offending
+       runs listed, or NOT YET VERIFIED with the exact run to do next. Until a
+       VERIFIED appears, the 3.3 stream separation is asserted, not measured.
+
+    C. THE FALLBACK TRIGGER IN fit_mixed CARRIED THE DEFECT THE GUARD CATCHES.
+       The acceptance guard has required a finite coefficient, a finite positive
+       standard error and a finite p since revision 3. The FALLBACK to
+       animal-only random effects, four lines above it, still triggered on the
+       coefficient alone. So the precise failure the guard exists for, a finite
+       coefficient with a NaN standard error on a boundary variance, never
+       reached the animal-only fit that might have succeeded, and the row was
+       dropped instead. Both now call one _usable() helper. Inert on this input,
+       where 48 of 48 models fitted nested and none were dropped, and it matters
+       for scripts 06 and 08, which copy this function.
+
+    D. TWO MORE PLACES WHERE THE SOURCE SAID WHAT THE HEADER HAD RETRACTED.
+       3.4 item A fixed the runtime text of the anchor-contrast claim. The
+       source comment above the contrast block still asserted, verbatim, that
+       differencing the two anchors removes focus size, focus density, animal
+       baseline and the circularity in one construction. Third location, and
+       the worst of the three, because a source comment is what the next person
+       to edit this file reads. Corrected in place with the reason.
+       Separately, revision 3.3 item C listed five contrast margins from the
+       3.2 run, which 3.4 left untouched while changing both the run and the
+       reporting rules: the values had moved, and three of the five rows are
+       NOT REPORTABLE under 3.4's own target-count gate. Removed rather than
+       refreshed, since Cell 8 prints them from the loaded input.
+
+    STANDING RULE THIS REVISION EXISTS TO ENFORCE. A check that cannot fail is
+    worse than no check, because it is reported as evidence. Any check added to
+    this series must have a stated failure mode, and it must be possible to say
+    what input would make it fail.
+
 CIRCULARITY FLAG
     Foci are defined by pooled myeloid density, so myeloid populations sit
     core-ward by construction. Radial results for CD68+IDO1+, CD68+IDO1-,
@@ -377,7 +453,7 @@ CIRCULARITY FLAG
 
 OUTPUTS
     figures/  F47 .. F52
-    tables/   60 .. 68
+    tables/   60 .. 68, and 69 the cross-run fingerprint ledger (revision 3.5)
 
 USAGE
     conda activate sc_pre
@@ -631,9 +707,15 @@ rng = np.random.default_rng(RANDOM_SEED)
 # order, on how many targets were looped, or on any permutation count. crc32
 # rather than hash(), because Python salts string hashing per process and the
 # subsample would not be reproducible between runs.
+#
+# REVISION 3.5: there are TWO running streams, not three. Revision 3.3 declared
+# rng_take for the per-cell model subsample and then never used it, because that
+# subsample went to subsample_rng instead, which is the better behaviour. A
+# declared generator that nothing draws from reads like a live stream to anyone
+# auditing this, so it is removed rather than left inert. Every subsample in
+# this script is identity-keyed; only the two nulls draw from a running stream.
 rng_prox = np.random.default_rng(RANDOM_SEED + 1)    # proximity null only
 rng_null = np.random.default_rng(RANDOM_SEED + 2)    # fallback distance null
-rng_take = np.random.default_rng(RANDOM_SEED + 3)    # per-cell model subsample
 
 
 def subsample_rng(*parts):
@@ -757,6 +839,24 @@ def safe_corr(a, b, min_n=4):
     return float(np.corrcoef(a[ok], b[ok])[0, 1])
 
 
+def _usable(res, term="arm"):
+    """
+    REVISION 3.5. One definition of a usable fit, applied in BOTH places that
+    need it: the fallback trigger and the acceptance guard. A finite coefficient
+    is not enough. statsmodels returns a finite coefficient with a NaN standard
+    error, raising nothing, when a variance component sits on the boundary at
+    zero, and under structures_rev5 two treated animals contribute a single
+    structure each, so that is a live failure mode.
+    """
+    try:
+        c = float(res.params.get(term, np.nan))
+        s = float(res.bse.get(term, np.nan))
+        p = float(res.pvalues.get(term, np.nan))
+    except Exception:
+        return False
+    return bool(np.isfinite(c) and np.isfinite(s) and s > 0 and np.isfinite(p))
+
+
 def fit_mixed(df, outcome, label, covariate=None, note=""):
     """
     outcome ~ arm [+ covariate], random intercept for animal, structure nested
@@ -804,7 +904,15 @@ def fit_mixed(df, outcome, label, covariate=None, note=""):
             mode = "animal + structure"
         except Exception:
             res = None
-        if res is None or not np.isfinite(res.params.get("arm", np.nan)):
+        # REVISION 3.5: the FALLBACK TRIGGER now applies the same test as the
+        # acceptance guard below. Revisions 3 to 3.4 triggered the fallback on
+        # the coefficient alone, so the exact failure the guard exists to catch,
+        # a finite coefficient with a NaN standard error on a boundary variance,
+        # never reached the animal-only fit that might have succeeded. The row
+        # was dropped instead. Same defect as the guard it sits above, one step
+        # earlier in the function. Inert on the revision 3.4 input, where all 48
+        # models fitted in 'animal + structure' mode and none were dropped.
+        if res is None or not _usable(res):
             try:
                 md = smf.mixedlm(formula, data=d, groups=d["sample_id"],
                                  re_formula="1")
@@ -822,6 +930,8 @@ def fit_mixed(df, outcome, label, covariate=None, note=""):
     if not (np.isfinite(_coef) and np.isfinite(_se) and _se > 0 and np.isfinite(_p)):
         print(f"    NO USABLE SE: {label} / {outcome} ({mode}). "
               f"coef={_coef} se={_se} p={_p}. Row DROPPED, not reported as NaN.")
+        print("      Both the nested fit and the animal-only fallback failed "
+              "this test.")
         return None
 
     means = d.groupby("condition")["_y"].mean()
@@ -952,7 +1062,7 @@ def exact_p_lmm(d, outcome, covariate=None):
 _tee = Tee(os.path.join(TAB_DIR, "00_size_corrected_report.txt"))
 sys.stdout = _tee
 
-banner("AKOYA SIZE-CORRECTED DISTANCE MODELS AND POLARISATION (revision 3.4)")
+banner("AKOYA SIZE-CORRECTED DISTANCE MODELS AND POLARISATION (revision 3.5)")
 print(f"Run time      : {datetime.now().isoformat(timespec='seconds')}")
 print(f"Input         : {IN_DIR}")
 print(f"Shared null   : {NN_NULL_TABLE}")
@@ -963,7 +1073,7 @@ if not HAVE_SCIPY:
 if not HAVE_SM:
     print(f"\n    WARNING: statsmodels unavailable ({_sm_err}). Models skipped.")
 
-print("\nOUTCOME STATUS (revision 3.4)")
+print("\nOUTCOME STATUS (revision 3.5)")
 print("    CONFIRMATORY : delta, distance minus that focus's own permutation")
 print("                   null. Removes structure size AND target density in")
 print("                   one construction.")
@@ -1181,11 +1291,13 @@ print("    sign and grows is over-correction, which is worse than the original")
 print("    confound.\n")
 
 percell_frames, struct_rows = [], []
-# REVISION 3.4: reproducibility check. _fp collects only OBSERVED quantities,
-# which no null parameter may influence; _subsample_mismatches counts any case
-# where an anchor subsample could not be re-derived from its identity key.
+# REVISION 3.4: reproducibility fingerprint. _fp collects only OBSERVED
+# quantities, which no null parameter may influence. REVISION 3.5: the
+# companion self-comparison is gone, because it could not fail; _subsample_capped
+# now records how many anchor sets were large enough to be subsampled at all,
+# which is the only population the fingerprint could vary over.
 _fp = hashlib.sha256()
-_subsample_mismatches = 0
+_subsample_capped = 0
 n_shared, n_recomputed = 0, 0
 
 for s, k, g in structure_frames():
@@ -1204,13 +1316,22 @@ for s, k, g in structure_frames():
                      a_idx, size=MAX_ANCHORS_PER_STRUCTURE, replace=False)
                  if n_a > MAX_ANCHORS_PER_STRUCTURE else a_idx)
         if RUN_REPRODUCIBILITY_CHECK and n_a > MAX_ANCHORS_PER_STRUCTURE:
-            # re-derive from the identity key alone. Equal means the subsample
-            # does not depend on stream position, which is the whole point of
-            # the revision 3.3 change.
-            _again = subsample_rng(s, k, anchor).choice(
-                a_idx, size=MAX_ANCHORS_PER_STRUCTURE, replace=False)
-            if not np.array_equal(np.sort(a_use), np.sort(_again)):
-                _subsample_mismatches += 1
+            # REVISION 3.5. Revision 3.4 re-derived this subsample by calling
+            # the same pure function with the same arguments and comparing the
+            # two. That comparison CANNOT FAIL. It proved only that
+            # subsample_rng is deterministic, which was never in question, and
+            # the log printed the resulting PASS as though it had verified
+            # stream independence. It had not.
+            #
+            # The check is not replaced by a cleverer in-run version, because
+            # the property at issue is invariance to the state of the running
+            # null streams, and the only way to test that from inside the run is
+            # to disturb those streams, which would change the nulls this run
+            # reports. A check that alters the numbers it is checking is worse
+            # than no check. So this now COUNTS capped subsamples and records
+            # that they are identity-keyed, and the verdict block states plainly
+            # that verification lives in the cross-run fingerprint below.
+            _subsample_capped += 1
         for target in NN_TARGETS:
             if target == anchor:
                 continue
@@ -1321,22 +1442,128 @@ if RUN_REPRODUCIBILITY_CHECK:
     print("    parameter controlling only the precision of one null, and moved")
     print("    observed proximity fractions and model p-values with it. The")
     print("    cause was one shared generator. Revision 3.3 split the streams")
-    print("    and keyed the subsamples on structure and anchor identity.")
-    print("    These two checks verify that rather than asserting it.\n")
-    if _subsample_mismatches:
-        print(f"    FAIL: {_subsample_mismatches} anchor subsample(s) could not be")
-        print("    re-derived from their identity key. A stream is still")
-        print("    crossed and NOTHING IN THIS RUN IS REPRODUCIBLE. Stop here.")
-    else:
-        print("    PASS  every anchor subsample re-derives from its identity")
-        print("          key alone, so it does not depend on stream position.")
+    print("    and keyed the subsamples on structure and anchor identity.\n")
+
+    print("    REVISION 3.5 WITHDRAWS THE 3.4 'PASS'. Revision 3.4 printed a")
+    print("    PASS here for a check that re-derived each anchor subsample by")
+    print("    calling the same pure function with the same arguments. That")
+    print("    comparison cannot fail. It showed that subsample_rng is")
+    print("    deterministic, which was never in question, and it could not")
+    print("    have detected a crossed stream. Anyone who read that PASS as")
+    print("    evidence, including the 3.4 findings summary, read too much")
+    print("    into it. There is no in-run substitute: testing invariance to")
+    print("    the null streams from inside the run means disturbing them,")
+    print("    which would change the nulls this run reports.\n")
+    print(f"    capped anchor subsamples this run : {_subsample_capped}")
+    print("    (structures above MAX_ANCHORS_PER_STRUCTURE; all identity-keyed,")
+    print("     every other anchor set is used whole and cannot vary at all)")
+
     print(f"\n    OBSERVED-VALUE FINGERPRINT : {FINGERPRINT}")
     print("    Covers every observed median, anchor subsample size and observed")
     print("    proximity fraction. No null parameter may touch any of them.")
-    print("    TO VERIFY: change N_PROXIMITY_PERMUTATIONS (300 -> 200, say) and")
-    print("    rerun. This fingerprint must be IDENTICAL. If it moves, a stream")
-    print("    is crossed and the run before it cannot be trusted. Record the")
-    print("    fingerprint beside any number quoted from this script.")
+    print("    This is the ONLY verification of the 3.3 stability fix, and it")
+    print("    means nothing within a single run. The ledger below does the")
+    print("    comparison across runs so it stops depending on someone")
+    print("    remembering a hex string.")
+
+    # ---- REVISION 3.5: cross-run fingerprint ledger --------------------------
+    # The 3.3 fix was still ASSERTED after 3.4, because the verification needs
+    # two runs and the script had no memory between them. It does now. Every run
+    # appends its fingerprint and the parameters that are ALLOWED to move an
+    # observed value; the verdict compares against prior runs that differ only
+    # in a null-precision parameter, which is exactly the experiment that was
+    # outstanding.
+    _LEDGER = "69_fingerprint_ledger.csv"
+    _ledger_path = os.path.join(TAB_DIR, _LEDGER)
+    _row = {
+        "run_time": datetime.now().isoformat(timespec="seconds"),
+        "fingerprint": FINGERPRINT,
+        "revision": "3.5",
+        "in_dir": IN_DIR,
+        "structure_source": STRUCTURE_SOURCE,
+        "random_seed": RANDOM_SEED,
+        "max_anchors_per_structure": MAX_ANCHORS_PER_STRUCTURE,
+        "n_permutations": N_PERMUTATIONS,
+        "n_proximity_permutations": N_PROXIMITY_PERMUTATIONS,
+    }
+    try:
+        _prior = (pd.read_csv(_ledger_path) if os.path.exists(_ledger_path)
+                  else pd.DataFrame())
+    except Exception as _e:
+        print(f"\n    WARNING: could not read {_LEDGER} ({_e}). Starting fresh.")
+        _prior = pd.DataFrame()
+
+    # A ledger written by an older revision may lack a column this verdict
+    # filters on. Warn and treat it as empty rather than raising, because a
+    # bookkeeping file must never be able to kill a run that has already done
+    # its work. The old rows are preserved in the file either way.
+    _prior_all = _prior          # everything on disk, rewritten verbatim below
+    _need_cols = ["fingerprint", "in_dir", "structure_source", "random_seed",
+                  "max_anchors_per_structure", "n_proximity_permutations"]
+    if len(_prior):
+        _missing = [c for c in _need_cols if c not in _prior.columns]
+        if _missing:
+            print(f"\n    WARNING: {_LEDGER} is missing {_missing}, so it predates")
+            print("    revision 3.5. Its rows are kept in the file but cannot be")
+            print("    compared against this run.")
+            _prior = pd.DataFrame()
+
+    sub("Cross-run fingerprint verdict")
+    if not len(_prior):
+        print("    NOT YET VERIFIED. This is the first run in the ledger, so")
+        print("    there is nothing to compare against. The 3.3 stability fix")
+        print("    remains ASSERTED until a second run exists.")
+        print("    TO VERIFY: set N_PROXIMITY_PERMUTATIONS to 200, rerun, and")
+        print("    read this block. Nothing else may change.")
+    else:
+        # runs whose observed values are entitled to match this one
+        _same_basis = _prior.loc[
+            (_prior["in_dir"] == IN_DIR)
+            & (_prior["structure_source"] == STRUCTURE_SOURCE)
+            & (_prior["random_seed"] == RANDOM_SEED)
+            & (_prior["max_anchors_per_structure"] == MAX_ANCHORS_PER_STRUCTURE)]
+        _diff_null = _same_basis.loc[
+            _same_basis["n_proximity_permutations"] != N_PROXIMITY_PERMUTATIONS]
+        _same_null = _same_basis.loc[
+            _same_basis["n_proximity_permutations"] == N_PROXIMITY_PERMUTATIONS]
+
+        if len(_diff_null):
+            _bad = _diff_null.loc[_diff_null["fingerprint"] != FINGERPRINT]
+            if len(_bad):
+                print(f"    FAIL. {len(_bad)} earlier run(s) on the same input and")
+                print("    seed, differing ONLY in a null-precision parameter,")
+                print("    produced a DIFFERENT observed-value fingerprint. A")
+                print("    stream is still crossed. Nothing in this script may")
+                print("    be quoted until that is found.")
+                for _, _r in _bad.iterrows():
+                    print(f"      {_r['run_time']}  rev {_r.get('revision','?')}  "
+                          f"n_prox={_r['n_proximity_permutations']}  "
+                          f"{_r['fingerprint']}")
+            else:
+                print(f"    VERIFIED. {len(_diff_null)} earlier run(s) differing only")
+                print("    in a null-precision parameter produced an IDENTICAL")
+                print("    observed-value fingerprint. The revision 3.3 stream")
+                print("    separation is now measured rather than asserted.")
+                for _, _r in _diff_null.iterrows():
+                    print(f"      {_r['run_time']}  rev {_r.get('revision','?')}  "
+                          f"n_prox={_r['n_proximity_permutations']}  "
+                          f"{_r['fingerprint']}")
+        else:
+            print("    NOT YET VERIFIED. The ledger holds earlier runs, but none")
+            print("    that differ only in a null-precision parameter, which is")
+            print("    the comparison that tests the 3.3 fix.")
+            print("    TO VERIFY: set N_PROXIMITY_PERMUTATIONS to 200, rerun.")
+
+        if len(_same_null):
+            _nd = _same_null.loc[_same_null["fingerprint"] != FINGERPRINT]
+            if len(_nd):
+                print(f"\n    ALSO FAIL: {len(_nd)} earlier run(s) with IDENTICAL")
+                print("    parameters produced a different fingerprint, so this")
+                print("    script is not deterministic at all. That is a harder")
+                print("    failure than a crossed stream.")
+
+    write_csv(pd.concat([_prior_all, pd.DataFrame([_row])], ignore_index=True),
+              _LEDGER)
 
 nn_struct = pd.DataFrame(struct_rows)
 percell = (pd.concat(percell_frames, ignore_index=True)
@@ -2099,10 +2326,25 @@ if len(pol):
 # ---- REVISION 3.2: the IDO1+ minus IDO1- anchor contrast --------------------
 # Both anchors are in the myeloid pool that defines a focus, so both are pulled
 # core-ward by detection, and both sit in the SAME foci, on the same slide, in
-# the same animal. IDO1 is used nowhere in detection. The within-animal
-# difference between the two anchors therefore removes focus size, focus
-# density, animal baseline and the circularity at once, because whatever
-# detection does to a pool member it does to both of them equally.
+# the same animal. IDO1 is used nowhere in detection. The contrast therefore
+# asks whether an arm effect is SPECIFIC to the IDO1-positive compartment or
+# generic to myeloid cells.
+#
+# REVISION 3.5. THIS COMMENT PREVIOUSLY CLAIMED THAT DIFFERENCING THE TWO
+# ANCHORS REMOVES FOCUS SIZE, FOCUS DENSITY, ANIMAL BASELINE AND THE
+# CIRCULARITY AT ONCE. That claim was retracted in the 3.3 docstring and
+# corrected in the 3.4 runtime text, and it survived here in the source. Third
+# location, same defect: a script may not assert what it has retracted, and a
+# source comment is read by the next person to edit this file, which is worse
+# than a stale line in a log.
+#
+# What is actually true: the claim holds only if both anchors respond to those
+# confounds the same way, and on this input they do not. The IDO1-negative term
+# carries a large animal-to-animal spread the IDO1-positive term does not share,
+# with the arms overlapping, so it is a second noisy measurement rather than a
+# stable reference point. The contrast is a SECOND VIEW. It earns its place row
+# by row against the IDO1-positive-alone margin printed beside it, never by
+# construction.
 def arm_margin(tvals, uvals):
     """Completely-separated gap between the arms, or None if they overlap."""
     tv = pd.Series(tvals).dropna()
