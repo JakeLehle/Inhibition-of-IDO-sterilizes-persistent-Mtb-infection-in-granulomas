@@ -4,7 +4,68 @@
 AKOYA Phenocycler - LYMPHOCYTE RADIAL POSITION, THE PRIMARY TEST
 Rhesus Mtb + SIV, D1MT-treated (G3) vs untreated (G4), necropsy lung sections
 
-Script 08 of the AKOYA analysis series. REVISION 6.
+Script 08 of the AKOYA analysis series. REVISION 7.
+
+REVISION 7, 2 October 2026. DENOMINATOR DEGREES OF FREEDOM.
+
+    This script's p-values and intervals came straight from statsmodels, which
+    reports a Wald z on each fixed effect with NO small-sample correction.
+    res.df_resid is cells minus rank, so a six-animal three-thousand-cell fit
+    was tested as though the arm contrast carried df near 2998. It does not.
+    Treatment was applied to six animals, so the arm contrast is a
+    between-animal contrast with about n_animals - 2 = 4 denominator degrees of
+    freedom however the likelihood is written.
+
+    The fix is in akoya_arm_stats.small_sample_inference and it refers the SAME
+    statistic to t(4) and builds the interval with t(0.975, 4) = 2.776 rather
+    than 1.96. No coefficient moves. No centring, detection or reference
+    changes. p_wald_z carries what statsmodels said so every historical table
+    can be reconciled against the new one rather than taken on trust.
+
+    CALIBRATION, simulated at this design. Six animals, 3 v 3, structures
+    1/1/2 against 13/9/54, cells per animal 122/83/869 against 1491/83/778,
+    outcome built as animal effect plus structure effect plus cell noise with
+    NO arm effect, 250 replicates, nominal 0.05. The nested fit converged in
+    99.6 percent of replicates so these are not a selected subset.
+
+        ICC_animal     Wald z (revision 6)      same statistic vs t(4)
+        0.00                 4.4 %                     0.4 %
+        ~0.09                9.2 %                     4.4 %
+        ~0.38                8.0 %                     4.8 %
+
+    That reproduces Kahan et al., Trials 2016, 17:438, which reports 8.4 and
+    8.6 percent at six clusters, at our own design rather than by citation.
+
+    WHAT IT DOES TO THIS SCRIPT'S HEADLINE. Back-solving the standard error out
+    of each revision 6 Wald p and re-referring to t(4):
+
+        population      coef     p rev6   p rev7   CI rev7
+        B cells       -0.1420   0.0053   0.0494   [-0.2834, -0.0006]
+        B lineage     -0.1601   0.0100   0.0616   [-0.3327, +0.0125]
+        Helper T      -0.1258   0.0230   0.0854   [-0.2794, +0.0278]
+        Plasma cells  -0.1507   0.0544   0.1267   [-0.3682, +0.0668]
+        CD4- T        -0.0079   0.8416   0.8513   [-0.1177, +0.1019]
+        Tregs         -0.1225   0.6612   0.6838   [-0.8986, +0.6536]
+
+    And on BH over the confirmatory family at BH_ALPHA = 0.10, m = 5, because
+    benjamini_hochberg runs on p_value and now receives the corrected one:
+
+        revision 6   B 0.0053 -> q 0.027 | HelperT 0.0230 -> q 0.058 | Plasma 0.0544 -> q 0.091
+        revision 7   B 0.0494 -> q 0.211 | HelperT 0.0854 -> q 0.211 | Plasma 0.1267 -> q 0.211
+
+    THREE OF FIVE SURVIVED BH BEFORE THIS FIX. NONE SURVIVES AFTER IT. Expect
+    the BH family summary near the end of this report to read 0 of 5 at
+    q < 0.10 where it previously read 3 of 5. If it still reads 3, the
+    corrected p is not reaching BH and something in this edit did not land.
+
+    What the B cell result still has is unchanged and is worth reporting: the
+    six animals separate completely, the effect is about 25 um core-ward
+    against a 176 um inscribed radius, and p_exact_means sits at 0.100, the
+    floor this design allows. What it no longer has is a model p below 0.05,
+    and no sentence may imply one.
+
+    The intervals in every figure this script feeds were also too narrow by 42
+    percent, which matters for F61 and F62 independently of any p-value.
 
 THE HYPOTHESIS
     Lymphocytes sit closer to the core of a myeloid focus in D1MT-treated
@@ -583,6 +644,13 @@ from itertools import combinations
 import numpy as np
 import pandas as pd
 
+# REVISION 7: the shared stats module. This script previously imported nothing
+# from it and defined its own fit_mixed, which is how the Wald-z defect could
+# live here and in 06, 07 and 07b at the same time. small_sample_inference is
+# the single definition of the degrees-of-freedom correction.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import akoya_arm_stats as aas
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -1049,6 +1117,14 @@ def fit_mixed(df, outcome, label, covariates=None, note=""):
     coef = float(res.params.get("arm", np.nan))
     se = float(res.bse.get("arm", np.nan))
 
+    # REVISION 7: the p-value and the interval now come from the number of
+    # ANIMALS, not the number of cells. The coefficient and standard error are
+    # untouched; only the reference distribution changes. n_animals is the
+    # cluster count actually contributing to this fit, after the
+    # MODEL_MIN_CELLS_PER_ANIMAL filter above, so a dropped animal correctly
+    # lowers the df rather than being assumed away.
+    _ss = aas.small_sample_inference(coef, se, d["sample_id"].nunique())
+
     # REVISION 3: exact randomization p-values beside the model p.
     p_means, p_lmm = np.nan, np.nan
     n_assign_means, n_assign_lmm = 0, 0
@@ -1073,8 +1149,14 @@ def fit_mixed(df, outcome, label, covariates=None, note=""):
         "mean_D1MT": float(means.get("D1MT", np.nan)),
         "mean_Untreated": float(means.get("Untreated", np.nan)),
         "coef_D1MT_vs_ref": coef, "std_err": se,
-        "ci_low": coef - 1.96 * se, "ci_high": coef + 1.96 * se,
-        "p_value": float(res.pvalues.get("arm", np.nan)),
+        # REVISION 7: t(n_animals - 2), not the standard normal. p_wald_z is
+        # what revision 6 reported as p_value and is kept so the two can be
+        # compared row by row in table 72.
+        "ci_low": _ss["ci_low"], "ci_high": _ss["ci_high"],
+        "p_value": _ss["p_value"],
+        "p_wald_z": float(res.pvalues.get("arm", np.nan)),
+        "df": _ss["df"], "t_crit": _ss["t_crit"],
+        "df_method": _ss["df_method"],
         "p_exact_means": p_means, "p_exact_lmm": p_lmm,
         # REVISION 6: the floor the design allows, so a reader can tell
         # "as good as this design gets" from "the animals do not separate".
@@ -1087,10 +1169,15 @@ def fit_mixed(df, outcome, label, covariates=None, note=""):
 _tee = Tee(os.path.join(TAB_DIR, "00_lymphocyte_radial_report.txt"))
 sys.stdout = _tee
 
-banner("AKOYA LYMPHOCYTE RADIAL POSITION - PRIMARY TEST (revision 6)")
+banner("AKOYA LYMPHOCYTE RADIAL POSITION - PRIMARY TEST (revision 7)")
 print(f"Run time : {datetime.now().isoformat(timespec='seconds')}")
 print(f"Input    : {IN_DIR}")
 print(f"Output   : {OUT_DIR}")
+print(f"Inference: p and CI on t(n_animals - 2) df via "
+      f"akoya_arm_stats.small_sample_inference")
+print("           The arm contrast is between-animal, so its denominator is the")
+print("           animals and not the cells. statsmodels' Wald z is retained as")
+print("           p_wald_z for comparison. BH runs on the CORRECTED p.")
 if not HAVE_SCIPY:
     print(f"\n    NOTE: scipy unavailable ({_scipy_err}). Not required in")
     print("    revision 3, which computes no distances. Continuing.")
@@ -1817,10 +1904,42 @@ if len(models):
             print(f"    {_r['analysis'][:58]:<60} {_r['family']}")
 
     sub("BH families")
+    print("    REVISION 7: these q-values are computed from the t(n_animals - 2)")
+    print("    p-value, not from the Wald z. On the revision 6 numbers the")
+    print("    confirmatory radial family returned 3 of 5 at q < 0.10. The")
+    print("    expectation after the correction is 0 of 5. If it still reads 3,")
+    print("    the corrected p is not reaching BH and the edit did not land.\n")
     for fam, g in models.groupby("family"):
         got = "no q (refit of one hypothesis)" if fam in NO_BH_FAMILIES else \
             f"{int((g['q_value'] < BH_ALPHA).sum())} of {len(g)} at q < {BH_ALPHA}"
         print(f"    {fam:<32} n={len(g):>3}   {got}")
+
+    # REVISION 7: the Wald-to-t movement, printed so the shift is auditable from
+    # the report alone rather than only by diffing two runs of table 72.
+    if "p_wald_z" in models.columns:
+        _mv = models.loc[np.isfinite(models["p_wald_z"])
+                         & np.isfinite(models["p_value"])].copy()
+        if len(_mv):
+            _crossed = _mv.loc[(_mv["p_wald_z"] < 0.05) & (_mv["p_value"] >= 0.05)]
+            sub("Degrees-of-freedom correction, what moved")
+            print(f"    {'rows with both p-values':<44}{len(_mv):>6}")
+            print(f"    {'significant at 0.05 on Wald z':<44}"
+                  f"{int((_mv['p_wald_z'] < 0.05).sum()):>6}")
+            print(f"    {'significant at 0.05 on t(df)':<44}"
+                  f"{int((_mv['p_value'] < 0.05).sum()):>6}")
+            print(f"    {'crossed 0.05 because of the correction':<44}"
+                  f"{len(_crossed):>6}")
+            if len(_crossed):
+                print("\n    Rows that were significant and are no longer:")
+                for _, _r in _crossed.sort_values("p_wald_z").iterrows():
+                    print(f"      {str(_r['analysis'])[:52]:<54}"
+                          f"{str(_r.get('family', ''))[:22]:<24}"
+                          f"p {_r['p_wald_z']:.4f} -> {_r['p_value']:.4f}")
+                print("\n    These are the rows where revision 6 bought "
+                      "significance with")
+                print("    a reference distribution the design does not support. "
+                      "Nothing")
+                print("    about the effect size changed.")
 
 
 # %% Cell 7 - radial profiles and figures

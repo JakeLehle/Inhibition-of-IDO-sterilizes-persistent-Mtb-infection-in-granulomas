@@ -4,7 +4,39 @@
 AKOYA Phenocycler - SIZE-CORRECTED DISTANCE MODELS AND POLARISATION
 Rhesus Mtb + SIV, D1MT-treated (G3) vs untreated (G4), necropsy lung sections
 
-Script 07 of the AKOYA analysis series. REVISION 3.5.
+Script 07 of the AKOYA analysis series. REVISION 3.6.
+
+REVISION 3.6, 2 October 2026. DENOMINATOR DEGREES OF FREEDOM.
+
+    Same change as script 08 revision 7 and 07b revision 3, applied here for
+    consistency. statsmodels reports a Wald z on each fixed effect with no
+    small-sample correction, and res.df_resid is cells minus rank, so the arm
+    contrast was tested as though it carried thousands of degrees of freedom.
+    It is a between-animal contrast and its denominator is about
+    n_animals - 2 = 4.
+
+    akoya_arm_stats.small_sample_inference refers the same statistic to t(4)
+    and builds the interval with t(0.975, 4) = 2.776 rather than 1.96. No
+    coefficient, null, delta, anchor reference or size correction changes.
+    p_wald_z keeps what statsmodels said.
+
+    TWO PLACES, NOT ONE. fit_mixed below did not carry an interval at all, and
+    the F48 forest rebuilt one from std_err with a hard-coded 1.96. That is the
+    second place an interval was computed from the same inputs, which is the
+    pattern that put two different IDO1 cutoff windows in scripts 03 and 09.
+    fit_mixed now returns ci_low and ci_high and the forest consumes them, so
+    there is one definition.
+
+    WHAT THIS DOES TO THIS SCRIPT'S CONCLUSIONS: nothing. The confirmatory
+    distance family leads with p_exact_means and with the leave-one-out margin
+    in microns, neither of which touches the model p. The plasma cell result
+    keeps complete animal separation on all three anchor references, a margin
+    an order of magnitude above the Monte Carlo noise floor, and a working
+    IDO1-negative specificity control. This revision changes the model column
+    beside it and leaves the finding where it was.
+
+    Expect the F48 forest intervals to widen by 42 percent. That is the
+    correction, not a regression.
 
 WHY THIS SCRIPT EXISTS
     Script 06 measures nearest-neighbour distances in microns. A distance
@@ -656,6 +688,12 @@ import time
 import numpy as np
 import pandas as pd
 
+# REVISION 3.6: the shared stats module, for small_sample_inference. This script
+# previously imported nothing from it and defined its own fit_mixed, which is how
+# the Wald-z defect could live here and in 06, 07b and 08 at the same time.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import akoya_arm_stats as aas
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -934,6 +972,12 @@ def fit_mixed(df, outcome, label, covariate=None, note=""):
               "this test.")
         return None
 
+    # REVISION 3.6: p and CI from the number of ANIMALS, not the number of
+    # cells. _coef and _se are untouched; only the reference distribution
+    # changes. The interval is returned from here so the F48 forest stops
+    # rebuilding it with a hard-coded 1.96.
+    _ss = aas.small_sample_inference(_coef, _se, d["sample_id"].nunique())
+
     means = d.groupby("condition")["_y"].mean()
     n_struct_arm = d.groupby("condition")["struct_key"].nunique()
     return {
@@ -947,7 +991,13 @@ def fit_mixed(df, outcome, label, covariate=None, note=""):
         "n_structures_ref": int(n_struct_arm.get(REFERENCE_ARM, 0)),
         "mean_D1MT": float(means.get("D1MT", np.nan)),
         "mean_Untreated": float(means.get("Untreated", np.nan)),
-        "coef_D1MT_vs_ref": _coef, "std_err": _se, "p_value": _p,
+        "coef_D1MT_vs_ref": _coef, "std_err": _se,
+        # REVISION 3.6: p_value is now the t(n_animals - 2) p. p_wald_z is what
+        # revisions 3 to 3.5 reported as p_value.
+        "p_value": _ss["p_value"], "p_wald_z": _p,
+        "ci_low": _ss["ci_low"], "ci_high": _ss["ci_high"],
+        "df": _ss["df"], "t_crit": _ss["t_crit"],
+        "df_method": _ss["df_method"],
         "coef_covariate": float(res.params.get("_cov", np.nan)) if covariate else np.nan,
         "p_covariate": float(res.pvalues.get("_cov", np.nan)) if covariate else np.nan,
         "note": note,
@@ -1062,7 +1112,13 @@ def exact_p_lmm(d, outcome, covariate=None):
 _tee = Tee(os.path.join(TAB_DIR, "00_size_corrected_report.txt"))
 sys.stdout = _tee
 
-banner("AKOYA SIZE-CORRECTED DISTANCE MODELS AND POLARISATION (revision 3.5)")
+banner("AKOYA SIZE-CORRECTED DISTANCE MODELS AND POLARISATION (revision 3.6)")
+print("Inference: model p and CI on t(n_animals - 2) df via "
+      "akoya_arm_stats.small_sample_inference.")
+print("           p_wald_z retains what revisions 3 to 3.5 reported. The")
+print("           confirmatory distance family still leads with p_exact_means")
+print("           and the leave-one-out margin, so this changes the model")
+print("           column beside the finding and not the finding.")
 print(f"Run time      : {datetime.now().isoformat(timespec='seconds')}")
 print(f"Input         : {IN_DIR}")
 print(f"Shared null   : {NN_NULL_TABLE}")
@@ -1880,8 +1936,19 @@ if len(models):
     if len(g):
         fig, ax = plt.subplots(figsize=(22, max(12, 1.1 * len(g))))
         yy = np.arange(len(g))
-        lo = g["coef_D1MT_vs_ref"] - 1.96 * g["std_err"]
-        hi = g["coef_D1MT_vs_ref"] + 1.96 * g["std_err"]
+        # REVISION 3.6: consume the interval fit_mixed computed rather than
+        # rebuilding it here with a hard-coded 1.96, which was both the wrong
+        # multiplier at six animals and a second definition of one quantity.
+        # The fallback keeps the figure drawable against a table written before
+        # revision 3.6, and says so rather than silently reverting.
+        if "ci_low" in g.columns and np.isfinite(g["ci_low"]).all():
+            lo, hi = g["ci_low"], g["ci_high"]
+        else:
+            _tc = g["t_crit"] if "t_crit" in g.columns else 1.96
+            lo = g["coef_D1MT_vs_ref"] - _tc * g["std_err"]
+            hi = g["coef_D1MT_vs_ref"] + _tc * g["std_err"]
+            print("    NOTE [F48]: no ci_low column, interval rebuilt from "
+                  "std_err. This table predates revision 3.6.")
         for i, (_, r) in enumerate(g.iterrows()):
             ex = r.get("p_exact_means", np.nan)
             col = (FLAG_COLOR if (np.isfinite(ex) and ex <= 0.101)

@@ -9,7 +9,57 @@ WHY THIS IS A MODULE AND NOT COPIED INTO EACH SCRIPT
     The IDO1 cutoff plateau search was implemented twice, in scripts 03 and 09,
     and the two reported different windows for a year without anyone noticing.
     Anything used by more than one script lives here so that cannot happen
-    again. Scripts 04, 08 and 09 import it.
+    again. Scripts 09 and 10 import it.
+
+    CORRECTED 2 October 2026. The previous header said "Scripts 04, 08 and 09
+    import it", which was wrong in both directions. 04 and 08 do not import it
+    at all, each defining its own local fit_mixed, and 10 does. The four
+    scripts with a local fit_mixed are 06, 07, 07b and 08, and after the
+    revision 7 change below they import small_sample_inference from here.
+
+REVISION 7, 2 October 2026
+    Six changes. The first is a bug fix, the second is the degrees-of-freedom
+    correction, the rest are transparency.
+
+    1. THE REVISION 3 FALLBACK FIX, BACKPORTED. fit_arm_lmm triggered its
+       fallback on a finite coefficient alone, so a nested fit returning a NaN
+       standard error never reached the animal-only refit that might have
+       succeeded. Script 08's fit_mixed fixed this in its own revision 3 and
+       the fix never came back here, which is precisely the failure mode this
+       module exists to prevent. Both the fallback trigger and the acceptance
+       test now go through _usable(), matching script 08.
+
+    2. DENOMINATOR DEGREES OF FREEDOM. See small_sample_inference below. The
+       arm contrast is between-animal and is now referred to t(n_animals - 2)
+       rather than to the standard normal, and the interval multiplier is the
+       matching t quantile rather than 1.96. The Wald z p-value is retained as
+       p_wald_z so every historical table can be reconciled against the new
+       one rather than taken on trust.
+
+    3. A SILENT FALL TO ANIMAL-ONLY IS NOW LOUD. The structure-nesting attempt
+       swallowed every exception, so a failure to build the structure key, for
+       instance when focus_id is not castable to int, dropped the fit to
+       animal-only random effects with no message. That matters more than it
+       looks: simulated at this design the animal-only route converges in 8 to
+       35 percent of null replicates against 99.6 percent for the nested fit,
+       so an unannounced demotion to animal-only is an unannounced move to a
+       route that mostly does not work.
+
+    4. add_centred_radial now records which structures fell back to the
+       cell-weighted reference. When no phenotype in a structure clears
+       min_cells_for_balance the balanced reference silently became the plain
+       mean of all core cells, so a structure could sit inside an analysis
+       labelled composition-balanced while carrying a cell-weighted centre.
+       The behaviour is unchanged. A balance_fallback column and a warning now
+       say where it happened.
+
+    5. format_test had two consecutive string literals, so the long
+       explanation was a no-op expression and never reached help(). Merged.
+       The model line now also prints the t degrees of freedom, so a figure
+       states its own reference.
+
+    6. The one-sided section of this docstring described a convention the
+       pipeline does not implement. See the note under section 2.
 
 WHAT IS IN HERE
 
@@ -35,18 +85,36 @@ WHAT IS IN HERE
        No amount of cells buys past it, because the randomisation happened at
        the animal.
 
+       THE FLOOR IS CALIBRATED, AND THE IMBALANCE DOES NOT BREAK IT. Checked at
+       20,000 replicates under a true null: the exact permutation on the six
+       animal means rejects at 9.6 to 10.4 percent against its nominal 0.10
+       across every animal ICC tried and every cells-per-animal imbalance
+       tried, including a deliberate treated 50/50/2000 against untreated
+       2000/2000/50. The worry that wildly unequal cell counts make the animal
+       means non-exchangeable and inflate the test was tested and is wrong.
+
     2. ONE-SIDED TESTING WITH PRE-SPECIFIED DIRECTION
-       Every call must declare the direction expected from the biology BEFORE
-       seeing the data, using D1MT_LOWER or D1MT_HIGHER. The result carries the
-       declared direction, the one-sided p, the two-sided p, and a flag for
-       whether the observed effect actually ran the declared way. If it ran the
-       other way the one-sided p is reported as it comes out, near 1, and is not
-       silently flipped. Both p-values are always in the returned record so
-       nothing is hidden.
+       **UNUSED. Retained so imports do not break, and documented so the code
+       and the Methods do not disagree.** D1MT_LOWER and D1MT_HIGHER are
+       supported by datta_satten_ranksum and by the two-stage fallback, and no
+       production script passes direction= to either. Everything reported in
+       this project is TWO-SIDED with the 0.100 floor, which is the right
+       convention here because effects can run in opposite directions across
+       cell types, and it is the convention the context notes describe.
 
-    3. CENTRED RADIAL POSITION, both centrings, identical to script 08.
+       Worth knowing what it would buy, because the question recurs. A
+       genuinely pre-specified one-sided test has a floor of 1/20 = 0.05 rather
+       than 2/20 = 0.100, so S1 would reach 0.05. Choosing that after the
+       results are in is not available. It is a design decision for the next
+       study, not a reporting decision for this one.
 
-    4. ANNOTATION HELPER that renders the same three-line bracket on any arm
+    3. SMALL-SAMPLE INFERENCE on an already-fitted fixed effect. New in
+       revision 7, and the one thing in this module a statistical reviewer
+       will look for.
+
+    4. CENTRED RADIAL POSITION, both centrings, identical to script 08.
+
+    5. ANNOTATION HELPER that renders the same three-line bracket on any arm
        comparison: the model line, the clustered test line, and the sample size
        line stating animals rather than cells.
 
@@ -70,6 +138,7 @@ except Exception:
 from itertools import combinations
 
 # ---- pre-specified directions ----------------------------------------------
+# UNUSED by every production script. See section 2 of the module docstring.
 D1MT_LOWER = "D1MT_lower"     # treated expected below untreated
 D1MT_HIGHER = "D1MT_higher"   # treated expected above untreated
 NO_DIRECTION = "two_sided"    # no pre-specification, two-sided only
@@ -104,7 +173,9 @@ def datta_satten_ranksum(values, clusters, arms, arm_a, arm_b,
     clusters : animal identifier for each observation
     arms     : arm label for each observation
     direction: D1MT_LOWER, D1MT_HIGHER or NO_DIRECTION. arm_a is treated as the
-               D1MT side for the purpose of interpreting the direction.
+               D1MT side for the purpose of interpreting the direction. NOTE
+               that no production script passes this; the project convention is
+               two-sided. See section 2 of the module docstring.
 
     Returns a dict. p_value is the one-sided p when a direction was declared and
     the two-sided p otherwise; p_one_sided and p_two_sided are always present.
@@ -191,12 +262,134 @@ def complete_separation(a, b):
 
 
 # =============================================================================
+# small-sample inference on an already-fitted fixed effect
+# =============================================================================
+#
+# Which small-sample reference to use. "between_animal" is the declared
+# default: denominator df = n_animals - 2, the between-animal contrast df.
+# "satterthwaite" is reserved and not implemented; it requires lmerTest through
+# pymer4. "none" restores the pre-revision-7 Wald z behaviour and exists only so
+# a historical table can be reproduced exactly.
+DF_METHOD = "between_animal"
+
+
+def small_sample_inference(coef, se, n_animals, n_arms=2, alpha=0.05,
+                           df_method=None):
+    """
+    Re-refer an already-fitted fixed effect to a small-sample t distribution.
+
+    Does NOT refit anything. Takes the coefficient and standard error the mixed
+    model produced and returns the p-value and interval that the number of
+    ANIMALS supports rather than the number of cells.
+
+    WHY THIS EXISTS
+        statsmodels mixedlm reports a Wald z on each fixed effect, coefficient
+        over standard error referred to the standard normal, and applies no
+        denominator degrees of freedom. res.df_resid is cells minus rank, so a
+        six-animal three-thousand-cell fit reports df_resid near 2998 and the
+        arm effect is tested as though it carried that much information.
+
+        The arm contrast is between-animal. Treatment was applied to six
+        animals, so it carries six independent pieces of information however
+        the likelihood is written, and its proper denominator is about
+        n_animals - 2 = 4. Referring a t(4) statistic to a normal is
+        anti-conservative, and so is building a 95 percent interval as
+        coef +/- 1.96 * se when the multiplier should be t(0.975, 4) = 2.776.
+        The old interval was too narrow by 42 percent.
+
+    CALIBRATION, simulated at this design
+        Six animals, 3 v 3, structures 1/1/2 against 13/9/54, cells per animal
+        122/83/869 against 1491/83/778, outcome built as animal effect plus
+        structure effect plus cell noise with NO arm effect, 250 replicates per
+        cell, nominal alpha 0.05. The nested fit converged in 99.6 percent of
+        replicates, so these are not a selected subset.
+
+            ICC_animal     Wald z (old)      same statistic vs t(4)
+            0.00                 4.4 %               0.4 %
+            ~0.09                9.2 %               4.4 %
+            ~0.38                8.0 %               4.8 %
+
+        The Wald z route runs at 8 to 9 percent where it matters, reproducing
+        Kahan et al., Trials 2016, 17:438, which reports 8.4 and 8.6 percent at
+        six clusters. The t(4) route is calibrated or conservative throughout.
+        Satterthwaite lands in the same place, because with treatment constant
+        within animal the arm contrast has close to n_animals - 2 df whatever
+        the cell count, so this closes the gap without an R dependency.
+
+    NOTE ON COVARIATES
+        A CELL-level covariate (local density, phenotype) does not consume
+        between-animal degrees of freedom, so n_arms stays 2. An ANIMAL-level
+        covariate does. If a model ever adds one, raise n_arms to match or the
+        df will be too generous.
+
+    NOTE ON THE TWO-STAGE FALLBACK
+        _cluster_mean_fallback was always correct on this point. It builds its
+        interval with t.ppf(0.975, n_animals - 2) and takes its p from a
+        t-test on the animal means. Only the LMM route was wrong, which is why
+        the fallback and the exact test agreed with each other while the model
+        p was the outlier.
+
+    Returns a dict with p_value, ci_low, ci_high, df, t_stat, t_crit and
+    df_method. Every field is NaN when the inputs are unusable. This function
+    does not invent a result from a NaN standard error, so the caller keeps its
+    own convergence guard.
+    """
+    out = {"p_value": np.nan, "ci_low": np.nan, "ci_high": np.nan,
+           "df": np.nan, "t_stat": np.nan, "t_crit": np.nan,
+           "df_method": df_method or DF_METHOD}
+    method = out["df_method"]
+
+    if not np.isfinite(coef) or not np.isfinite(se) or se <= 0:
+        return out
+
+    if method == "none":
+        if not HAVE_SCIPY:
+            return out
+        z = float(coef / se)
+        out.update({"p_value": float(2.0 * (1.0 - _st.norm.cdf(abs(z)))),
+                    "ci_low": float(coef - 1.96 * se),
+                    "ci_high": float(coef + 1.96 * se),
+                    "df": np.inf, "t_stat": z, "t_crit": 1.96})
+        return out
+
+    if method == "satterthwaite":
+        raise NotImplementedError(
+            "Satterthwaite df require lmerTest via pymer4. Use "
+            "DF_METHOD='between_animal' until that route exists.")
+
+    try:
+        n_animals = int(n_animals)
+    except Exception:
+        return out
+    dfree = n_animals - int(n_arms)
+    if dfree < 1 or not HAVE_SCIPY:
+        # a fit on no more animals than parameters has no inference to report
+        out["df"] = float(dfree)
+        return out
+
+    t_stat = float(coef / se)
+    t_crit = float(_st.t.ppf(1.0 - alpha / 2.0, dfree))
+    out.update({"p_value": float(2.0 * (1.0 - _st.t.cdf(abs(t_stat), dfree))),
+                "ci_low": float(coef - t_crit * se),
+                "ci_high": float(coef + t_crit * se),
+                "df": float(dfree), "t_stat": t_stat, "t_crit": t_crit})
+    return out
+
+
+def df_note(n_animals, n_arms=2):
+    """One line for a figure annotation or a table footer."""
+    d = int(n_animals) - int(n_arms)
+    return (f"p and CI on t({d}) df, the between-animal contrast df at "
+            f"{int(n_animals)} animals")
+
+
+# =============================================================================
 # centred radial position, identical construction to script 08
 # =============================================================================
 
 def add_centred_radial(df, struct_col="focus_id", radial_col="radial_pos",
                        pheno_col="pheno", region_col="region",
-                       min_cells_for_balance=10):
+                       min_cells_for_balance=10, label=""):
     """
     Adds, for core cells only:
         radial_centered_core           reference = mean of ALL core cells
@@ -204,7 +397,22 @@ def add_centred_radial(df, struct_col="focus_id", radial_col="radial_pos",
                                        per-phenotype means, so composition
                                        cannot move the reference
         balance_reference              the balanced reference per structure
+        balance_fallback               True where the balanced reference COULD
+                                       NOT be built and the cell-weighted mean
+                                       was used instead
+
     Operates on one section at a time. Returns the frame with columns added.
+
+    REVISION 7 ON THE FALLBACK. When no phenotype in a structure has at least
+    min_cells_for_balance cells, the balanced reference falls back to the plain
+    mean of all core cells in that structure. That is the cell-weighted
+    reference, so the affected structure sits inside an analysis labelled
+    composition-balanced while carrying exactly the centring the balanced
+    reference was built to avoid. The behaviour is UNCHANGED, because changing
+    it would move numbers. What is new is that it is visible: the
+    balance_fallback column marks the rows and a warning names the structures.
+    Thin treated structures are the ones at risk, so check this column before
+    quoting a balanced-reference coefficient.
     """
     d = df.copy()
     d[radial_col] = pd.to_numeric(d[radial_col], errors="coerce")
@@ -215,20 +423,35 @@ def add_centred_radial(df, struct_col="focus_id", radial_col="radial_pos",
         d["radial_centered_core"] = np.nan
         d["radial_centered_core_balanced"] = np.nan
         d["balance_reference"] = np.nan
+        d["balance_fallback"] = False
         return d
 
     means = core.groupby(struct_col)[radial_col].transform("mean")
     d.loc[d["is_core"], "radial_centered_core"] = core[radial_col] - means
 
-    bal = {}
+    bal, fell_back = {}, []
     for k, g in core.groupby(struct_col):
         per_ph = g.groupby(pheno_col)[radial_col].agg(["mean", "size"])
         per_ph = per_ph.loc[per_ph["size"] >= min_cells_for_balance]
-        bal[k] = (float(per_ph["mean"].mean()) if len(per_ph)
-                  else float(g[radial_col].mean()))
+        if len(per_ph):
+            bal[k] = float(per_ph["mean"].mean())
+        else:
+            bal[k] = float(g[radial_col].mean())
+            fell_back.append((k, int(len(g))))
     d.loc[d["is_core"], "radial_centered_core_balanced"] = (
         core[radial_col] - core[struct_col].map(bal))
     d["balance_reference"] = d[struct_col].map(bal)
+    d["balance_fallback"] = d[struct_col].isin([k for k, _ in fell_back])
+
+    if fell_back:
+        tag = f" [{label}]" if label else ""
+        detail = ", ".join(f"{k} ({n} core cells)" for k, n in fell_back)
+        print(f"    WARNING [add_centred_radial{tag}]: no phenotype reached "
+              f"{min_cells_for_balance} core cells in {len(fell_back)} "
+              f"structure(s), so the BALANCED reference fell back to the "
+              f"cell-weighted mean there: {detail}")
+        print("      Those rows are marked balance_fallback=True. A balanced "
+              "coefficient resting on them is not composition-corrected.")
     return d
 
 
@@ -247,22 +470,28 @@ def weighted_mean_by(df, group_cols, value_col, weight_col):
 
 def format_test(res, model_row=None, unit_label="cells", extra=None,
                 include_rank_sum=False):
-    """include_rank_sum=None means show it only when there is no model line."""
     """
     Annotation text. The mixed model leads.
 
     include_rank_sum defaults to False. The exact rank-sum is bounded below by
     1/20 one-sided and 2/20 two-sided at three animals per arm, so every
-    completely separated comparison returns exactly 0.05, which on a figure
-    reads as six identical results rather than as one arithmetic bound. It is
-    still computed and still written to the arm-tests table as the
+    completely separated comparison returns exactly the same number, which on a
+    figure reads as six identical results rather than as one arithmetic bound.
+    It is still computed and still written to the arm-tests table as the
     assumption-free check; it just does not compete for attention on the plot.
+
+    include_rank_sum=None means show it only when there is no model line, so a
+    panel whose model did not converge still reports a test.
+
+    REVISION 7. The model line now carries its t degrees of freedom, so a
+    figure states the reference its p-value was taken against rather than
+    leaving a reader to assume a normal. Rows fitted before revision 7 have no
+    df field and render as before.
     """
     lines = []
     have_model = (model_row is not None
                   and np.isfinite(model_row.get("p_value", np.nan)))
     if include_rank_sum is None:
-        # a panel whose model did not converge must still report a test
         include_rank_sum = not have_model
     if have_model:
         c = model_row.get("coef_D1MT_vs_ref", np.nan)
@@ -271,7 +500,12 @@ def format_test(res, model_row=None, unit_label="cells", extra=None,
         p = model_row.get("p_value", np.nan)
         route = str(model_row.get("random_effects", ""))
         name = ("animal means t-test" if "fallback" in route else "mixed model")
-        lines.append(f"{name}  {c:+.3f} [{lo:+.3f}, {hi:+.3f}]  p = {p:.3f}")
+        dfv = model_row.get("df", np.nan)
+        # np.isfinite is False for inf, which is what DF_METHOD="none" records,
+        # so the normal-reference case correctly renders no t tag.
+        dftag = f" t({int(dfv)})" if np.isfinite(dfv) else ""
+        lines.append(f"{name}{dftag}  {c:+.3f} [{lo:+.3f}, {hi:+.3f}]  "
+                     f"p = {p:.3f}")
     if include_rank_sum and res is not None and np.isfinite(
             res.get("p_value", np.nan)):
         side = ("one-sided" if res.get("direction_declared") != NO_DIRECTION
@@ -350,9 +584,33 @@ except Exception:
     HAVE_SM = False
 
 
-
 # ON. See the docstring of _cluster_mean_fallback for the calibration evidence.
 USE_TWO_STAGE_FALLBACK = True
+
+
+def _usable(res, term="_arm"):
+    """
+    A returned result object is NOT a usable fit.
+
+    Arm is constant within animal, so the animal effect and the arm effect
+    compete and the Hessian can go singular, which surfaces as a NaN standard
+    error while statsmodels reports no error at all. A finite coefficient alone
+    is not enough.
+
+    REVISION 7. This is script 08's revision 3 test, backported. Before this,
+    fit_arm_lmm triggered its fallback on np.isfinite(res.params) alone, so a
+    nested fit with a NaN standard error never reached the animal-only refit
+    that might have succeeded, and nothing caught it on the way out either.
+    """
+    if res is None:
+        return False
+    try:
+        c = float(res.params.get(term, np.nan))
+        e = float(res.bse.get(term, np.nan))
+        p = float(res.pvalues.get(term, np.nan))
+    except Exception:
+        return False
+    return bool(np.isfinite(c) and np.isfinite(e) and e > 0 and np.isfinite(p))
 
 
 def _cluster_mean_fallback(rec, d, value_col, arm_col, cluster_col, arm_a,
@@ -393,6 +651,11 @@ def _cluster_mean_fallback(rec, d, value_col, arm_col, cluster_col, arm_a,
 
     Results from this route are labelled "cluster means t-test (fallback)" and
     rendered on figures as "animal means t-test", never as a mixed model.
+
+    NOTE, revision 7. This route was already correct on degrees of freedom. It
+    builds its interval with t.ppf(0.975, n_animals - 2) and takes its p from a
+    t-test on the animal means, which is why it and the exact test agreed with
+    each other all along while the LMM p-value was the outlier.
     """
     if not USE_TWO_STAGE_FALLBACK:
         return rec
@@ -431,7 +694,8 @@ def _cluster_mean_fallback(rec, d, value_col, arm_col, cluster_col, arm_a,
                 "p_value": (p_one if direction != NO_DIRECTION and np.isfinite(p_one)
                             else p_two),
                 "p_two_sided": p_two, "p_one_sided": p_one,
-                "df": dfree, "ran_as_predicted": ran_ok,
+                "df": dfree, "t_crit": crit, "df_method": "animal_means_t",
+                "ran_as_predicted": ran_ok,
                 "n_clusters_a": int(len(ga)), "n_clusters_b": int(len(gb)),
                 "random_effects": "cluster means t-test (fallback)",
                 "converged": ok})
@@ -456,21 +720,29 @@ def fit_arm_lmm(df, value_col, arm_col, cluster_col, arm_a, arm_b,
     1/20, because the p-value comes from a likelihood rather than from counting
     the 20 possible arm assignments.
 
-    THE ASSUMPTION IT BUYS THAT WITH. Residuals and animal effects are taken to
-    be roughly normal, and statsmodels reports asymptotic z-tests with no
-    small-sample degrees-of-freedom correction. With six clusters that is
-    somewhat liberal, so the p-value is the optimistic end of the range and the
-    exact rank-sum is the conservative end. Report both.
+    WHAT IT ASSUMES, AND WHAT REVISION 7 CHANGED. Residuals and animal effects
+    are taken to be roughly normal. statsmodels then reports an asymptotic Wald
+    z with NO small-sample degrees-of-freedom correction, which at six clusters
+    runs at 8 to 9 percent false positive against a nominal 5. Revision 7 refers
+    the same statistic to t(n_animals - 2) through small_sample_inference and
+    builds the interval with the matching t quantile. The Wald z p is retained
+    as p_wald_z so historical tables can be reconciled.
+
+    The exact animal-level test remains the conservative end of the range and
+    should still be reported beside this. After the df correction the two tend
+    to agree, which is the reassuring outcome.
 
     log10=True fits on log10(value) and adds fold_change = 10**coef, which is
     the right scale for densities spanning an order of magnitude.
     """
     rec = {"analysis": label, "outcome": value_col, "log10": bool(log10),
            "coef_D1MT_vs_ref": np.nan, "std_err": np.nan, "ci_low": np.nan,
-           "ci_high": np.nan, "p_value": np.nan, "n_obs": 0, "n_clusters": 0,
+           "ci_high": np.nan, "p_value": np.nan, "p_wald_z": np.nan,
+           "df": np.nan, "t_crit": np.nan, "df_method": DF_METHOD,
+           "n_obs": 0, "n_clusters": 0,
            "n_clusters_a": 0, "n_clusters_b": 0,
            "random_effects": "", "fold_change": np.nan, "converged": False,
-           "clusters_dropped": ""}
+           "clusters_dropped": "", "nesting_note": ""}
     if not HAVE_SM:
         return rec
     covariates = list(covariates or [])
@@ -502,6 +774,8 @@ def fit_arm_lmm(df, value_col, arm_col, cluster_col, arm_a, arm_b,
 
     # covariates enter as fixed effects. A pooled-lineage model adjusts for cell
     # type so that composition within the lineage cannot drive the arm effect.
+    # NOTE these are CELL-level covariates and do not consume between-animal
+    # degrees of freedom, so n_arms stays at its default of 2 below.
     terms = ["_arm"]
     for i, c in enumerate(covariates):
         if d[c].dtype == object or str(d[c].dtype).startswith("category"):
@@ -517,6 +791,7 @@ def fit_arm_lmm(df, value_col, arm_col, cluster_col, arm_a, arm_b,
 
     import warnings
     res, mode = None, ""
+    nest_err = ""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         if struct_col is not None:
@@ -528,9 +803,27 @@ def fit_arm_lmm(df, value_col, arm_col, cluster_col, arm_a, arm_b,
                                   vc_formula={"struct": "0 + C(_sk)"})
                 res = md.fit(reml=True, method="lbfgs", maxiter=300)
                 mode = "animal + structure"
-            except Exception:
+            except Exception as e:
+                # REVISION 7: this was a bare `res = None`, so a failure here,
+                # for instance struct_col not castable to int, demoted the fit
+                # to animal-only with no message at all. The animal-only route
+                # converges in 8 to 35 percent of null replicates against 99.6
+                # percent for the nested fit, so an unannounced demotion is an
+                # unannounced move to a route that mostly does not work.
+                nest_err = f"{type(e).__name__}: {e}"
                 res = None
-        if res is None or not np.isfinite(res.params.get("_arm", np.nan)):
+        # REVISION 7: the trigger is _usable(), not a finite coefficient. A
+        # nested fit with a NaN standard error now reaches the animal-only
+        # refit, which is script 08's revision 3 behaviour.
+        if not _usable(res):
+            if struct_col is not None:
+                print(f"    WARNING [fit_arm_lmm {label}]: structure-nested "
+                      f"fit unusable, refitting with animal random intercept "
+                      f"only.")
+                if nest_err:
+                    print(f"      nesting failed with {nest_err}")
+                print("      An 'animal only' fit is a SELECTED fit at this "
+                      "design. Treat the row as a diagnostic, not a result.")
             try:
                 md = _smf.mixedlm(formula, data=d, groups=d[cluster_col],
                                   re_formula="1")
@@ -538,25 +831,34 @@ def fit_arm_lmm(df, value_col, arm_col, cluster_col, arm_a, arm_b,
                 mode = "animal only"
             except Exception:
                 res = None
-    if res is None:
-        return _finish_fold(
-            _cluster_mean_fallback(rec, d, value_col, arm_col, cluster_col,
-                                   arm_a, arm_b, label, log10,
-                                   direction=direction), log10)
+    rec["nesting_note"] = nest_err
+
+    if not _usable(res):
+        rec = _cluster_mean_fallback(rec, d, value_col, arm_col, cluster_col,
+                                     arm_a, arm_b, label, log10,
+                                     direction=direction)
+        if not rec["converged"]:
+            print(f"    WARNING [fit_arm_lmm {label}]: no usable fit by any "
+                  f"route. Report the clustered rank-sum for this quantity "
+                  f"instead.")
+        return _finish_fold(rec, log10)
+
     c = float(res.params.get("_arm", np.nan))
     se = float(res.bse.get("_arm", np.nan))
-    pv = float(res.pvalues.get("_arm", np.nan))
+
+    # REVISION 7: the p-value and the interval now come from the number of
+    # ANIMALS, not the number of cells. p_wald_z keeps what statsmodels said so
+    # the change is auditable rather than taken on trust.
+    ss = small_sample_inference(c, se, rec["n_clusters"])
     rec.update({"coef_D1MT_vs_ref": c, "std_err": se,
-                "ci_low": c - 1.96 * se, "ci_high": c + 1.96 * se,
-                "p_value": pv, "random_effects": mode})
-    # A returned result object is NOT convergence. Arm is constant within
-    # animal, so with a random intercept alone the animal effect and the arm
-    # effect compete and the Hessian can go singular, which shows up as a NaN
-    # standard error while statsmodels reports no error at all. Silently
-    # dropping the model line from a figure is the worst possible outcome, so
-    # this is checked and said out loud.
+                "ci_low": ss["ci_low"], "ci_high": ss["ci_high"],
+                "p_value": ss["p_value"],
+                "p_wald_z": float(res.pvalues.get("_arm", np.nan)),
+                "df": ss["df"], "t_crit": ss["t_crit"],
+                "df_method": ss["df_method"],
+                "random_effects": mode})
     rec["converged"] = bool(np.isfinite(c) and np.isfinite(se) and se > 0
-                            and np.isfinite(pv))
+                            and np.isfinite(ss["p_value"]))
     if not rec["converged"]:
         rec = _cluster_mean_fallback(rec, d, value_col, arm_col, cluster_col,
                                      arm_a, arm_b, label, log10,
@@ -565,9 +867,7 @@ def fit_arm_lmm(df, value_col, arm_col, cluster_col, arm_a, arm_b,
         print(f"    WARNING [fit_arm_lmm {label}]: no usable fit by any route "
               f"(coef={c:.4f}, se={se}). Report the clustered rank-sum for "
               f"this quantity instead.")
-    if log10 and rec["converged"]:
-        rec["fold_change"] = float(10 ** rec["coef_D1MT_vs_ref"])
-    return rec
+    return _finish_fold(rec, log10)
 
 
 def _finish_fold(rec, log10):

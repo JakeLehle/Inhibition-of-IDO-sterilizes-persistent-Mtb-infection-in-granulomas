@@ -4,8 +4,33 @@
 AKOYA Phenocycler - IS THE DISTANCE DELTA COMPOSITION-CONTAMINATED?
 Rhesus Mtb + SIV, D1MT-treated (G3) vs untreated (G4), necropsy lung sections
 
-Script 07b of the AKOYA analysis series. REVISION 2.
+Script 07b of the AKOYA analysis series. REVISION 3.
 A DIAGNOSTIC. It writes to its own directory and changes nothing script 07 owns.
+
+REVISION 3, 2 October 2026. DENOMINATOR DEGREES OF FREEDOM.
+
+    Same change as script 08 revision 7 and script 07 revision 3.6.
+    statsmodels reports a Wald z on each fixed effect with no small-sample
+    correction, and res.df_resid is cells minus rank, so the arm contrast was
+    tested as though it carried thousands of degrees of freedom when it is a
+    between-animal contrast with about n_animals - 2 = 4.
+
+    akoya_arm_stats.small_sample_inference refers the same statistic to t(4)
+    and adds the matching interval. p_wald_z keeps what revision 2 reported as
+    p_value.
+
+    NOTHING ABOUT THIS SCRIPT'S VERDICT CHANGES. The question here is whether a
+    per-animal delta separates the six animals under each of three anchor
+    references, and that verdict comes from complete_separation and arm_margin
+    on table 83, neither of which involves a model. The r = 0.9995 validation
+    against table 53 compares distances in microns, not p-values, so it is
+    untouched as well. Table 84's models are the secondary column and they are
+    what moves.
+
+    One consequence worth stating. BH in this script runs within each reference
+    separately, and at BH_ALPHA = 0.10 on five targets per anchor the corrected
+    p-values will clear fewer rows. That is expected and it does not bear on
+    section D, which is the part of this script that answers the question.
 
 WHY THIS SCRIPT EXISTS
 
@@ -204,6 +229,12 @@ from itertools import combinations
 
 import numpy as np
 import pandas as pd
+
+# REVISION 3: the shared stats module, for small_sample_inference. This script
+# previously imported nothing from it and defined its own fit_mixed, which is how
+# the Wald-z defect could live here and in 06, 07 and 08 at the same time.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import akoya_arm_stats as aas
 
 import matplotlib
 matplotlib.use("Agg")
@@ -494,11 +525,23 @@ def fit_mixed(df, outcome, label):
         return None
 
     n_struct_arm = d.groupby("condition")["struct_key"].nunique()
+
+    # REVISION 3: p and CI from the number of ANIMALS, not the number of cells.
+    # The coefficient and standard error are untouched; only the reference
+    # distribution changes.
+    _coef = float(res.params["arm"])
+    _se = float(res.bse["arm"])
+    _ss = aas.small_sample_inference(_coef, _se, d["sample_id"].nunique())
+
     return {
         "analysis": label, "outcome": outcome, "fit_mode": mode,
-        "coef_D1MT_vs_ref": float(res.params["arm"]),
-        "std_err": float(res.bse["arm"]),
-        "p_value": float(res.pvalues["arm"]),
+        "coef_D1MT_vs_ref": _coef,
+        "std_err": _se,
+        "p_value": _ss["p_value"],
+        "p_wald_z": float(res.pvalues["arm"]),
+        "ci_low": _ss["ci_low"], "ci_high": _ss["ci_high"],
+        "df": _ss["df"], "t_crit": _ss["t_crit"],
+        "df_method": _ss["df_method"],
         "p_exact_means": exact_p_animal_means(d, "_y")
         if RUN_EXACT_RANDOMIZATION else np.nan,
         "n_cells": int(len(d)), "n_animals": int(d["sample_id"].nunique()),
@@ -511,7 +554,12 @@ def fit_mixed(df, outcome, label):
 _tee = Tee(os.path.join(TAB_DIR, "00_composition_null_report.txt"))
 sys.stdout = _tee
 
-banner("AKOYA COMPOSITION-AWARE NULL FOR THE DISTANCE DELTA (script 07b rev 2)")
+banner("AKOYA COMPOSITION-AWARE NULL FOR THE DISTANCE DELTA (script 07b rev 3)")
+print("Inference     : model p and CI on t(n_animals - 2) df via "
+      "akoya_arm_stats.")
+print("                p_wald_z retains what revision 2 reported. Section D's")
+print("                verdict comes from animal-level separation, not from a")
+print("                model, so the verdict is unaffected by this change.")
 print(f"Run time      : {datetime.now().isoformat(timespec='seconds')}")
 print(f"Input         : {IN_DIR}")
 print(f"Null tested   : {NN_NULL_TABLE}")
