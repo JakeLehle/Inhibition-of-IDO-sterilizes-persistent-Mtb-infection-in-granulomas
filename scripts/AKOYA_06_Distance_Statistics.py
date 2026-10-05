@@ -1507,8 +1507,9 @@ if len(models):
         m = m.sort_values("p_value")
         fig, ax = plt.subplots(figsize=(22, max(12, 0.75 * len(m))))
         yy = np.arange(len(m))
-        lo = m["coef_D1MT_vs_ref"] - 1.96 * m["std_err"]
-        hi = m["coef_D1MT_vs_ref"] + 1.96 * m["std_err"]
+        _tc = g.get("t_crit", 1.96)
+        lo = g["coef_D1MT_vs_ref"] - _tc * g["std_err"]
+        hi = g["coef_D1MT_vs_ref"] + _tc * g["std_err"]
         for i, (_, r) in enumerate(m.iterrows()):
             sig = bool(r["sig_q"])
             ax.plot([lo.iloc[i], hi.iloc[i]], [i, i],
